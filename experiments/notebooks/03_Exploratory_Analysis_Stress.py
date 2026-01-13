@@ -1,90 +1,9 @@
 #%% Importações
-
-# ---------------------------
-# Manipulação de dados
-# ---------------------------
-import collections
-import numpy as np
-import os
-import pandas as pd
-import statistics
 import sys
-import time
-import timeit
-import math
-
-
-# ---------------------------
-# Estatística e testes estatísticos
-# ---------------------------
-import statsmodels.api as sm
-from scipy import stats
-from scipy.stats import (
-    anderson, chi2_contingency, f_oneway, kstest, normaltest,
-    shapiro, ttest_rel, wilcoxon, mannwhitneyu
-)
-from statsmodels.stats.outliers_influence import variance_inflation_factor
-
-# ---------------------------
-# Salvamento e análise de tamanho do modelo
-# ---------------------------
-import joblib
-from pympler import asizeof
-
-# ---------------------------
-# Pré-processamento
-# ---------------------------
-import missingno as msno
-from sklearn.preprocessing import (
-    LabelEncoder, OneHotEncoder, RobustScaler, StandardScaler
-)
-
-# ---------------------------
-# Divisão do dataset
-# ---------------------------
-from sklearn.model_selection import train_test_split
-from sklearn.model_selection import KFold
-
-# ---------------------------
-# Parametrização
-# ---------------------------
-from sklearn.model_selection import GridSearchCV
-
-# ---------------------------
-# Modelos de aprendizado de máquina
-# ---------------------------
-from sklearn.cluster import DBSCAN, KMeans
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.linear_model import LinearRegression, LogisticRegression
-
-# ---------------------------
-# Métricas de avaliação
-# ---------------------------
-from sklearn.metrics import (
-    accuracy_score, confusion_matrix, f1_score, mean_squared_error,
-    precision_score, r2_score, recall_score, silhouette_score,
-    mean_absolute_error, mean_absolute_percentage_error,
-    median_absolute_error, max_error,
-    roc_auc_score, average_precision_score, log_loss,
-    matthews_corrcoef, cohen_kappa_score, brier_score_loss,
-    hamming_loss, jaccard_score, fbeta_score,
-    balanced_accuracy_score, zero_one_loss,
-    silhouette_score, calinski_harabasz_score, davies_bouldin_score
-)
-
-# ---------------------------
-# Dimensionalidade
-# ---------------------------
-from sklearn.decomposition import PCA
-
-# ---------------------------
-# Visualização
-# ---------------------------
-import matplotlib.pyplot as plt
-import plotly.express as px
-import seaborn as sns
-import os
 from pathlib import Path
+src_path = Path(__file__).resolve().parent.parent.parent / 'src'
+sys.path.insert(0, str(src_path))
+from config_imports import *
 
 # Cores ANSI
 RED = "\033[31m"
@@ -96,7 +15,7 @@ CYAN = "\033[36m"
 RESET = "\033[0m"
 
 #%%[markdown]
-# CARREGANDO O DATASET
+# Carrega o conjunto de dados
 current_dir = Path(os.getcwd())
 processed_dir = current_dir / 'experiments' / 'processed'
 print(processed_dir)
@@ -105,15 +24,17 @@ data_dir = Path.cwd().parent / 'processed'
 df_stress = pd.read_csv(data_dir / 'dataset_stress.csv')
 df_exercise = pd.read_csv(data_dir / 'dataset_exercise.csv')
 #%%[markdown]
-# Dados do Protocolo Stress
+# Conjunto de dados brutos do Protocolo Stress
 display(df_stress.head())
 display(df_stress.columns)
 display(df_stress.dtypes)
-# %%
+# %% [markdown]
+# Suprime a coluna 'protocol' que é apenas util nos protocolos Exercicio
 df_stress.drop(columns=['protocol'], inplace=True)
 df_stress.info()
 # %%
 df_stress.describe()
+#%%
 
 # %%[markdown]
 # Estatisticas Básicas
@@ -161,7 +82,7 @@ def calcular_estatisticas(df_stress):
         #media_harmonica = statistics.harmonic_mean(sequencia) if len(sequencia) > 0 else 'N/A'
         di = percentil_75 - percentil_25
         limite_inferior = percentil_25 - (1.5 * di)
-        limite_superior = percentil_75 + (1.5 * di)  # Corrigido para ser superior
+        limite_superior = percentil_75 + (1.5 * di)
         variancia_amostral = statistics.variance(sequencia)
         variancia_populacional = statistics.pvariance(sequencia)
         variancia_1 = np.var(sequencia)
@@ -272,7 +193,9 @@ def plot_histograms_with_kde(df_stress, num_cols=2, num_rows=None):
     plt.tight_layout()
     plt.show()
 
-plot_histograms_with_kde(df_stress, num_cols=5, num_rows=11)
+plot_histograms_with_kde(df_stress, num_cols=3, num_rows=17)
+
+
 # %%
 def plotar_grid_boxplots(df, colunas_ignorar=None, n_colunas_grid=3):
 
@@ -308,7 +231,8 @@ def plotar_grid_boxplots(df, colunas_ignorar=None, n_colunas_grid=3):
     plt.tight_layout()
     plt.show()
 
-#%%
+#%%[markdown]
+# QQ Plot
 plotar_grid_boxplots(df_stress, n_colunas_grid=3)
 # %% QQ Plot
 
@@ -344,7 +268,8 @@ from scipy import stats
 plot_qq_for_numeric_columns(df_stress, 17, 3)
 
 
-# %% Testar a Normalidade
+# %% [markdown]
+# Testar a Normalidade, foi adicionado Mann-Whitney U para testes não parametricos
 
 def testar_normalidade_completa(df_stress):
     numeric_cols = df_stress.select_dtypes(include='number').columns
@@ -393,7 +318,8 @@ def testar_normalidade_completa(df_stress):
 
 testar_normalidade_completa(df_stress)
 
-# %% Análise de Correlação entre os Atributos Numéricos
+# %% [markdown]
+# Análise de Correlação entre os Atributos Numéricos
 
 num_df = df_stress[numeric_columns]
 correlation = num_df.corr()
@@ -405,10 +331,10 @@ plt.title('Matriz de Correlação entre atributos numéricos')
 plt.show()
 
 # %%
-
 top_n = 10
 correlation.head(top_n)
-# %% Analise de Colinearidade 
+# %% [markdown]
+# Analise de Colinearidade 
 
 X = df_stress[numeric_columns].copy()
 scaler = StandardScaler()
@@ -419,7 +345,8 @@ vif_data["feature"] = numeric_columns
 vif_data["VIF"] = [variance_inflation_factor(X_scaled, i) for i in range(X_scaled.shape[1])]
 vif_data
 
-# %% Atributos CAtegóricos
+# %% [markdown]
+# Atributos CAtegóricos
 
 def plot_categorical_distribution(df_stress, num_rows=2, num_cols=2, rotation=45):
     """
@@ -522,7 +449,8 @@ for col in categorical_columns:
     chi2, p, _, _ = chi2_contingency(contingency_table)
     print(f"Variável: {col}, p-valor: {p:.5f} -- ", "Associação significativa" if p < 0.05 else "Sem associação significativa")
 
-# %% Analise de Outliers
+# %% [markdown]
+# Analise de Outliers
 def analisar_outliers(df_stress, tamanho_figura=(10, 10), num_cols=3):
     """
     Analisa outliers em um DataFrame, removendo a primeira coluna e criando boxplots para colunas numéricas.
@@ -641,3 +569,260 @@ def analisar_outliers(df_stress, tamanho_figura=(10, 10), num_cols=3):
 analisar_outliers(df_stress, tamanho_figura=(10, 10), num_cols=3)
 
 # %%
+#%%[markdown]
+# Roda o OLS
+
+features_significativas = [
+    'acc_x_mean', 'acc_x_std', 'acc_y_std', 
+    'acc_mean', 'acc_std', 'acc_ratio_up', 'acc_ratio_down',
+    'mean_raw_eda', 'std_raw_eda', 
+    'mean_tonic_eda', 'std_tonic_eda', 'tonic_ratio_up', 'tonic_ratio_down',
+    'mean_phasic_eda', 'std_phasic_eda', 
+    'scr_mean_amp', 'scr_mean_height', 
+    'hr_mean', 
+    'max_ibi', 'min_ibi', 'mean_ibi', 
+    'pnn50', 'rmssd', 'sdnn', 
+    'total_power', 'ratio', 
+    'VLF_power', 'LF_power', 'VHF_power', 'VHF_peak'
+]
+
+X = df_stress[features_significativas]
+X = sm.add_constant(X)
+
+y = df_stress['label']
+
+model = sm.OLS(y, X).fit()
+print(model.summary())
+# %%
+
+def plot_residuos(model, titulo='Resíduo vs Valor Predito', usar_lowess=True):
+
+    residuals = model.resid
+    predicted_values = model.fittedvalues
+
+    plt.figure(figsize=(8, 6))
+    plt.scatter(predicted_values, residuals, color='blue', alpha=0.5)
+    plt.axhline(y=0, color='red', linestyle='--')
+
+
+    if usar_lowess:
+        try:
+            sns.residplot(x=predicted_values, y=residuals, lowess=True,
+                          line_kws={'color': 'red', 'lw': 2, 'linestyle': '--'})
+        except Exception as e:
+            print("Erro ao aplicar LOWESS (linha suavizada):", e)
+
+    plt.title(titulo)
+    plt.xlabel('Valor predito')
+    plt.ylabel('Resíduo')
+    plt.show()
+# %%
+plot_residuos(model, titulo='Análise dos Resíduos do Modelo Linear')
+
+
+# %% [markdown]
+def avaliar_desempenho(y_test, y_pred, n_features):
+    mse = mean_squared_error(y_test, y_pred)
+    mae = mean_absolute_error(y_test, y_pred)
+    
+    # PROTEÇÃO CONTRA DIVISÃO POR ZERO NO MAPE
+    try:
+        # O sklearn pode gerar erro ou warning gigantesco aqui se y_test tiver zeros
+        mape = mean_absolute_percentage_error(y_test, y_pred)
+    except:
+        mape = np.nan # Define como nulo se falhar
+        
+    mdae = median_absolute_error(y_test, y_pred)
+    rmse = np.sqrt(mse)
+    me = max_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
+    
+    n = len(y_test)
+    p = n_features
+    
+    # Proteção para R2 ajustado se n for pequeno demais
+    if (n - p - 1) != 0:
+        r2_adj = 1 - (1 - r2) * (n - 1) / (n - p - 1)
+    else:
+        r2_adj = np.nan
+        
+    # EVS
+    var_test = np.var(y_test)
+    if var_test != 0:
+        evs = 1 - np.var(y_test - y_pred) / var_test
+    else:
+        evs = 0.0 # Se a variância for 0, o score é irrelevante
+
+    return {
+        "mse": mse,
+        "mae": mae,
+        "mape": mape,  # Provavelmente será inf ou gigante
+        "mdae": mdae,
+        "rmse": rmse,
+        "me": me,
+        "r2": r2,
+        "r2_adj": r2_adj,
+        "evs": evs
+    }
+# %%
+X = df_stress.drop(columns=['label'])
+X
+#%%
+y = df_stress['label']
+y
+# %%
+kf = KFold(n_splits=10, shuffle=True, random_state=42)
+kf
+
+# %%
+resultados = [] # lista para armazenar as métricas
+modelos_por_fold = [] # lista para armazenar os modelos
+
+
+for fold, (train, test) in enumerate(kf.split(X), 1):
+    X_train, X_test = X.iloc[train], X.iloc[test]
+    y_train, y_test = y.iloc[train], y.iloc[test]
+
+    feature_cols = X_train.select_dtypes(include=[np.number]).columns
+    X_train = X_train[feature_cols]
+    X_test = X_test[feature_cols]
+
+    modelo = LinearRegression()
+
+    # Treinamento
+    start_train = timeit.default_timer()
+    modelo.fit(X_train, y_train)
+    end_train = timeit.default_timer()
+    train_time = end_train - start_train
+
+    # Predição
+    start_pred = timeit.default_timer()
+    y_pred = modelo.predict(X_test)
+    end_pred = timeit.default_timer()
+    pred_time = end_pred - start_pred
+
+    # Avaliação
+    met = avaliar_desempenho(y_test, y_pred, X_test.shape[1])
+
+    # Tamanho do modelo
+    filename = f'modelo_fold{fold}.joblib'
+    joblib.dump(modelo, filename)
+    model_size_mb = os.path.getsize(filename) / (1024 * 1024)
+    os.remove(filename)
+
+    # Salva resultados
+    resultados.append({
+        "fold": fold,
+        "train_time_s": train_time,
+        "pred_time_s": pred_time,
+        "model_size_mb": model_size_mb,
+        **met
+    })
+
+    # Salva o modelo em memória
+    modelos_por_fold.append(modelo)
+# %%
+resultados_lr = pd.DataFrame(resultados)
+resultados_lr
+# %%
+print(f"\nMédias dos folds:")
+print(resultados_lr.mean(numeric_only=True).to_string(float_format='%.4f'))
+# %%
+
+def validar_modelo_regressao(modelo, X, y, kfold, func_avaliacao, salvar_modelos=False):
+    """
+    Executa validação cruzada com k folds para um modelo de regressão qualquer,
+    medindo tempo de treino, predição, tamanho do modelo e métricas.
+
+    Parâmetros:
+    - modelo: objeto sklearn-like com fit(X_train, y_train) e predict(X_test)
+    - X: pandas DataFrame com features
+    - y: pandas Series com target
+    - kfold: objeto KFold já configurado (ex: KFold(n_splits=10, shuffle=True))
+    - func_avaliacao: função que recebe (y_test, y_pred, n_features) e retorna dict métricas
+    - salvar_modelos: bool, se True salva os arquivos dos modelos (pasta atual)
+
+    Retorna:
+    - DataFrame com resultados por fold
+    """
+    resultados = []
+
+    for fold, (train_idx, test_idx) in enumerate(kfold.split(X), 1):
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+
+        modelo_fold = modelo.__class__(**modelo.get_params())  # cria nova instância do mesmo modelo
+
+        start_train = timeit.default_timer()
+        modelo_fold.fit(X_train, y_train)
+        end_train = timeit.default_timer()
+        train_time = end_train - start_train
+
+        start_pred = timeit.default_timer()
+        y_pred = modelo_fold.predict(X_test)
+        end_pred = timeit.default_timer()
+        pred_time = end_pred - start_pred
+
+        met = func_avaliacao(y_test, y_pred, X_test.shape[1])
+
+        filename = f'modelo_fold{fold}.joblib'
+        joblib.dump(modelo_fold, filename)
+        model_size_mb = os.path.getsize(filename) / (1024 * 1024)
+        if not salvar_modelos:
+            os.remove(filename)
+
+        resultados.append({
+            "fold": fold,
+            "train_time_s": train_time,
+            "pred_time_s": pred_time,
+            "model_size_mb": model_size_mb,
+            **met
+        })
+
+    return pd.DataFrame(resultados)
+
+# %%
+
+
+le = LabelEncoder()
+y = le.fit_transform(df_stress['label'])
+print(f"\nMapeamento: {dict(zip(le.classes_, le.transform(le.classes_)))}")
+
+# Remover colunas não-numéricas de X
+X = df_stress.drop(columns=['label', 'subject_id', 'window_id'], errors='ignore')
+X = X.select_dtypes(include=[np.number])
+
+# Agora usar CLASSIFICADOR ao invés de regressor
+from sklearn.ensemble import RandomForestClassifier
+
+param_grid = {
+    'n_estimators': [50, 100, 200],
+    'max_depth': [5, 10, 15, None],
+    'min_samples_split': [2, 5, 10],
+    'min_samples_leaf': [1, 2, 4]
+}
+
+rf = RandomForestClassifier(random_state=42)
+grid_search = GridSearchCV(rf, param_grid, cv=3, scoring='accuracy', n_jobs=-1)
+grid_search.fit(X, y)
+
+print(f"\nMelhores parâmetros: {grid_search.best_params_}")
+print(f"Melhor score: {grid_search.best_score_:.4f}")
+# %%
+best_rf = grid_search.best_estimator_
+
+y = pd.Series(y, index=df_stress.index, name='label')
+resultados_rf = validar_modelo_regressao(best_rf, X, y, kf, avaliar_desempenho)
+resultados_rf
+
+# %%
+print(f"\nMédias dos folds:")
+print(resultados_rf.mean(numeric_only=True).to_string(float_format='%.4f'))
+# %%
+# %%
+# Salvar o melhor modelo Random Forest treinado
+model_path = processed_dir /  'best_random_forest_model.joblib'
+model_path.parent.mkdir(parents=True, exist_ok=True)  # Criar pasta se não existir
+joblib.dump(best_rf, model_path)
+print(f"Modelo salvo em: {model_path}")
+print(f"Tamanho do arquivo: {os.path.getsize(model_path) / (1024 * 1024):.2f} MB")
