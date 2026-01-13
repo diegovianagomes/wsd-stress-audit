@@ -40,4 +40,4 @@ Thumbs.db
 
 # Logs
 *.log
-logs/
+logs/experiments/results/report.html
