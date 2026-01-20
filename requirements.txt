@@ -1,0 +1,27 @@
+# Data manipulation
+pandas
+numpy
+
+# Machine Learning
+scikit-learn
+xgboost
+imbalanced-learn
+
+# Signal processing & Statistics
+scipy
+neurokit2
+statsmodels
+
+# Visualization
+matplotlib
+seaborn
+plotly
+missingno
+
+# Clustering
+pyclustering
+
+# Utilities
+tqdm
+joblib
+pympler
