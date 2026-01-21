@@ -6,9 +6,10 @@ import os
 from pathlib import Path
 
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
-from src.config import SAMPLING_RATES, SENSOR_COLUMNS, RAW_DATA_DIR
+from src.config import SAMPLING_RATES, SENSOR_COLUMNS
 
-#%%
+#%%[Markdown]
+# 
 def load_sensors_csv(filepath, sensor_type):
     filepath = Path(filepath)
     
@@ -42,7 +43,8 @@ def load_sensors_csv(filepath, sensor_type):
     
     return df
 
-#%%
+#%%[Markdown]
+# 
 def load_subject_raw_data(subject_folder_path):
     subject_folder_path = Path(subject_folder_path)
     data_bundle = {}

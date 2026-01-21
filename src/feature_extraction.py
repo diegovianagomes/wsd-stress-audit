@@ -1,9 +1,8 @@
 import numpy as np
 import pandas as pd
-import scipy.stats as stats
-from scipy import signal, interpolate 
+from scipy import signal
 import neurokit2 as nk
-from src.config import SAMPLING_RATES, WINDOW_SIZE, STEP_SIZE
+from src.config import WINDOW_SIZE, STEP_SIZE
 
 
 class FeatureExtractor:
@@ -18,7 +17,8 @@ class FeatureExtractor:
         ratio_up = np.sum(diff > 0) / n
         ratio_down = np.sum(diff < 0) / n
         return ratio_up, ratio_down
-
+    
+    # BVP
     def extract_bvp_features(self, bvp_window):
         feats = {}
         if bvp_window.empty: return {'bvp_mean': 0, 'bvp_std': 0}
@@ -27,6 +27,7 @@ class FeatureExtractor:
         feats['bvp_std'] = np.std(vals)
         return feats
 
+    # HR
     def extract_hr_features(self, hr_window):
         feats = {}
         if hr_window.empty: return {k: 0 for k in ['hr_mean', 'hr_std', 'hr_ratio_down', 'hr_ratio_up']}
@@ -38,10 +39,20 @@ class FeatureExtractor:
         feats['hr_ratio_down'] = r_down
         return feats
 
+    # ACC
     def extract_acc_features(self, acc_window):
-        keys = ['acc_x_mean', 'acc_x_std', 'acc_y_mean', 'acc_y_std', 
-                'acc_z_mean', 'acc_z_std', 'acc_mean', 'acc_std', 
-                'acc_ratio_up', 'acc_ratio_down']
+        
+        keys = ['acc_x_mean', 
+                'acc_x_std', 
+                'acc_y_mean', 
+                'acc_y_std', 
+                'acc_z_mean', 
+                'acc_z_std', 
+                'acc_mean', 
+                'acc_std', 
+                'acc_ratio_up', 
+                'acc_ratio_down'
+        ]
         feats = {k: 0 for k in keys}
         
         if acc_window.empty: return feats
@@ -59,14 +70,23 @@ class FeatureExtractor:
         feats['acc_ratio_down'] = r_down
         return feats
 
+    # EDA
     def extract_eda_features(self, eda_window, fs=4):
+        
         defaults = {
-            'mean_raw_eda': 0, 'std_raw_eda': 0,
-            'mean_tonic_eda': 0, 'std_tonic_eda': 0,
-            'mean_phasic_eda': 0, 'std_phasic_eda': 0,
-            'tonic_ratio_up': 0, 'tonic_ratio_down': 0,
-            'peaks_density': 0, 'scr_mean_amp': 0, 'scr_mean_height': 0,
-            'scr_mean_risetime': 0, 'scr_mean_recoverytime': 0
+            'mean_raw_eda': 0, 
+            'std_raw_eda': 0,
+            'mean_tonic_eda': 0, 
+            'std_tonic_eda': 0,
+            'mean_phasic_eda': 0, 
+            'std_phasic_eda': 0,
+            'tonic_ratio_up': 0, 
+            'tonic_ratio_down': 0,
+            'peaks_density': 0, 
+            'scr_mean_amp': 0, 
+            'scr_mean_height': 0,
+            'scr_mean_risetime': 0, 
+            'scr_mean_recoverytime': 0
         }
         if len(eda_window) < fs * 10: return defaults
 
@@ -105,28 +125,38 @@ class FeatureExtractor:
         except: return defaults
         return feats
 
+    #  HRV -> Usa LOMB-SCARGLE para calcular Frequência, pois não requer interpolação e é o método padrão para séries temporais irregulares como IBI.
     def extract_hrv_features(self, ibi_window):
-        """
-        HRV (20 features): 
-        Usa LOMB-SCARGLE para calcular Frequência.
-        Motivo: Não requer interpolação (que estava crashando o Kernel) 
-        e é o método padrão para séries temporais irregulares como IBI.
-        """
-        keys = ['max_ibi', 'min_ibi', 'mean_ibi', 'hr_mean_ibi', 
-                'pnn20', 'pnn50', 'rmssd', 'sdnn',
-                'total_power', 'ratio', 
-                'VLF_power', 'VLF_peak', 'LF_power', 'LF_peak', 'LF_n',
-                'HF_power', 'HF_peak', 'HF_n', 'VHF_power', 'VHF_peak']
+
+        keys = ['max_ibi', 
+                'min_ibi', 
+                'mean_ibi', 
+                'hr_mean_ibi', 
+                'pnn20', 
+                'pnn50', 
+                'rmssd', 
+                'sdnn',
+                'total_power', 
+                'ratio', 
+                'VLF_power', 
+                'VLF_peak', 
+                'LF_power', 
+                'LF_peak', 
+                'LF_n',
+                'HF_power', 
+                'HF_peak', 
+                'HF_n', 
+                'VHF_power', 
+                'VHF_peak']
         feats = {k: 0.0 for k in keys}
         
-        # 1. Validação
         if ibi_window.empty: return feats
         ibi_clean = ibi_window[(ibi_window > 0.3) & (ibi_window < 1.3)].dropna()
         if len(ibi_clean) < 5: return feats
 
-        # --- DOMÍNIO DO TEMPO ---
+        # Time Domain
         try:
-            rri = ibi_clean.values * 1000.0 # ms
+            rri = ibi_clean.values * 1000.0
             diff_rri = np.diff(rri)
             
             feats['mean_ibi'] = np.mean(ibi_clean)
@@ -144,32 +174,31 @@ class FeatureExtractor:
         except:
             return feats
 
-        # DOMÍNIO DA FREQUÊNCIA (LOMB-SCARGLE) 
+        # Frequency Domain
         try:
             # Tempo acumulado dos batimentos (Eixo X)
             t_rri = np.cumsum(rri) / 1000.0 
             t_rri = t_rri - t_rri[0]
             
-            # Valores dos batimentos (Eixo Y) - Removemos a média (detrend)
+            # Valores dos batimentos (Eixo Y)
             y_rri = rri - np.mean(rri)
 
             # Define as frequências que queremos analisar (0.01Hz até 0.5Hz)
-            # 1000 pontos é precisão suficiente e leve para a memória
             freqs = np.linspace(0.01, 1.0, 500) 
             
-            # Calcula Periodograma Lomb-Scargle (Puro Numpy/Scipy, sem interpolação)
+            # Calcula Periodograma Lomb-Scargle
             # angular frequencies = 2 * pi * freqs
             pgram = signal.lombscargle(t_rri, y_rri, freqs * 2 * np.pi, normalize=False)
             
-            # O Scipy retorna potência não normalizada pela frequência, ajustamos para PSD aproximado
-            psd = pgram * (1.0 / len(t_rri)) # Normalização simples
+            # O retorna potência não normalizada pela frequência
+            psd = pgram * (1.0 / len(t_rri))
 
-            # Função auxiliar para extrair métricas da banda
+            # Função para extrair métricas da banda
             def get_band_metrics(f_arr, p_arr, low, high):
                 mask = (f_arr >= low) & (f_arr < high)
                 if not np.any(mask): return 0.0, 0.0
                 
-                # Potência = Área sob a curva (regra do trapézio)
+                # Potência = Área sob a curva 
                 power = np.trapz(p_arr[mask], f_arr[mask])
                 
                 # Pico = Frequência onde a potência é máxima
@@ -187,10 +216,14 @@ class FeatureExtractor:
             total_p = vlf_p + lf_p + hf_p + vhf_p
             
             feats['total_power'] = total_p
-            feats['VLF_power'] = vlf_p; feats['VLF_peak'] = vlf_peak
-            feats['LF_power'] = lf_p;   feats['LF_peak'] = lf_peak
-            feats['HF_power'] = hf_p;   feats['HF_peak'] = hf_peak
-            feats['VHF_power'] = vhf_p; feats['VHF_peak'] = vhf_peak
+            feats['VLF_power'] = vlf_p; 
+            feats['VLF_peak'] = vlf_peak
+            feats['LF_power'] = lf_p;   
+            feats['LF_peak'] = lf_peak
+            feats['HF_power'] = hf_p;   
+            feats['HF_peak'] = hf_peak
+            feats['VHF_power'] = vhf_p; 
+            feats['VHF_peak'] = vhf_peak
             
             # Ratio e Normalizados
             if hf_p > 0: 
@@ -201,7 +234,7 @@ class FeatureExtractor:
                 feats['HF_n'] = hf_p / total_p
 
         except Exception as e:
-            pass # Mantém zeros se falhar
+            pass
 
         for k in feats:
             if pd.isna(feats[k]) or np.isinf(feats[k]): feats[k] = 0.0

@@ -1,5 +1,3 @@
-"""Módulo centralizado de imports para análise exploratória."""
-
 # Bibliotecas padrão
 import collections
 import math
@@ -9,6 +7,7 @@ import sys
 import time
 import timeit
 from pathlib import Path
+from tqdm import tqdm
 
 # Bibliotecas de dados e computação científica
 import numpy as np
@@ -29,7 +28,7 @@ from sklearn.cluster import DBSCAN, KMeans
 from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.model_selection import GridSearchCV, KFold, train_test_split
+from sklearn.model_selection import GridSearchCV, KFold, train_test_split, StratifiedKFold, GroupKFold
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, RobustScaler, StandardScaler
 from sklearn.metrics import (
     accuracy_score, average_precision_score, balanced_accuracy_score,
