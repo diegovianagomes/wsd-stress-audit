@@ -1,8 +1,11 @@
 #%%
 import os
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from tqdm import tqdm
-from sklearn.model_selection import KFold, GroupKFold, StratifiedKFold, train_test_split
+from sklearn.model_selection import KFold, GroupKFold, StratifiedKFold,LeaveOneGroupOut, train_test_split
 
 #%%
 print("Diretório atual:", os.getcwd())
@@ -33,9 +36,7 @@ os.makedirs(CLUSTER_DIR, exist_ok=True)
 os.makedirs(LOGO_DIR, exist_ok=True)
 
 # %% [Markdown] 
-# Carregamento de Dados
-    # Separação X e y
-    # Dropa colunas metadados
+#
 def carregar_dados(caminho):
     data = pd.read_csv(caminho)
     
@@ -140,34 +141,78 @@ def kfold(data, X, n_splits=10):
 kfold(data_full, X_data)
 
 # %% Agrupamento 
-def kfold_cluster(data, target_col, n_splits=10):
+def kfold_cluster(data, target_col, group_col, n_splits=10):
+
     data_cluster = data.drop(columns=[target_col], errors='ignore')
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+    groups = data[group_col] 
+    
+    gkf = GroupKFold(n_splits=n_splits)
     info_folds = []
 
-    for fold_number, (train_index, test_index) in enumerate(tqdm(kf.split(data_cluster), total=n_splits), start=1):
+    for fold_number, (train_index, test_index) in enumerate(tqdm(gkf.split(data_cluster, groups=groups), total=n_splits, desc="Group KFold"), start=1):
         
         train = data_cluster.iloc[train_index].reset_index(drop=True)
         test = data_cluster.iloc[test_index].reset_index(drop=True)
         
-        train.to_csv(os.path.join(CLUSTER_DIR, f"train_cluster_{fold_number}.csv"), index=False)
-        test.to_csv(os.path.join(CLUSTER_DIR, f"test_cluster_{fold_number}.csv"), index=False)
+        train.to_csv(os.path.join(CLUSTER_DIR, f"STRESS_train_group_{fold_number}.csv"), index=False)
+        test.to_csv(os.path.join(CLUSTER_DIR, f"STRESS_test_group_{fold_number}.csv"), index=False)
+        
+
+        test_subjects = data.iloc[test_index][group_col].unique().tolist()
         
         info_folds.append({
             "fold": fold_number,
             "train_rows": train.shape[0],
             "test_rows": test.shape[0],
+            "test_subjects": test_subjects, 
             "train_index": train_index.tolist(),
             "test_index": test_index.tolist()
         })
 
     pd.DataFrame(info_folds).to_csv(os.path.join(CLUSTER_DIR, "STRESS_info_cluster.csv"), index=False)
 
-kfold_cluster(data_full, target_col=TARGET)
+kfold_cluster(data_full, target_col=TARGET, group_col=GROUP_COL, n_splits=10)
 
 # %% [Markdown]
-# Leave One Group Out
+# LOGO - LeaveOneGroupOut
+def logo_folds(data, target_col, group_col='subject_id'):
+
+    # Preparação
+    X = data.drop(columns=[target_col], errors='ignore')
+    y = data[target_col]
+    groups = data[group_col]
+    
+    loo = LeaveOneGroupOut()
+    info_folds = []
+    
+    total_subjects = data[group_col].nunique()
+
+    for fold_number, (train_index, test_index) in enumerate(tqdm(loo.split(X, y, groups=groups), total=total_subjects, desc="LOGO Folds"), start=1):
+        
+        train = data.iloc[train_index].reset_index(drop=True)
+        test = data.iloc[test_index].reset_index(drop=True)
+        
+        subject_test = test[group_col].iloc[0]
+        
+        train_filename = f"STRESS_train_{subject_test}.csv"
+        test_filename = f"STRESS_test_{subject_test}.csv"
+        
+        train.to_csv(os.path.join(LOGO_DIR, train_filename), index=False)
+        test.to_csv(os.path.join(LOGO_DIR, test_filename), index=False)
+        
+        info_folds.append({
+            "fold": fold_number,
+            "object_test": subject_test,
+            "train_rows": train.shape[0],
+            "test_rows": test.shape[0],
+            "class_dist_test": test[target_col].value_counts(normalize=True).to_dict()
+        })
+
+    pd.DataFrame(info_folds).to_csv(os.path.join(LOGO_DIR, "STRESS_folds_info.csv"), index=False)
+
+column_group = 'subject_id' if 'subject_id' in data_full.columns else 'participant'
+logo_folds(data_full, target_col=TARGET, group_col=column_group)
 
 
 
-#%%
+# %%
