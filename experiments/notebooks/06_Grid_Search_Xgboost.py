@@ -44,11 +44,20 @@ def fold_loader(path_csv):
 #%% [Markdown] 
 # parâmetros para XGBoost
 
+#
+'''param_grid_xgb = {
+    'n_estimators': [50, 100, 200, 300],
+    'learning_rate': [0.01, 0.05, 0.1, 0.3],    
+    'max_depth': [3, 5, 7, 9],             
+    'subsample': [0.6, 0.8, 1.0]         
+}'''
+
+# parametros focando nos melhores 131-179
 param_grid_xgb = {
-    'n_estimators': [100, 200],
-    'learning_rate': [0.01, 0.1],    
-    'max_depth': [3, 6],             
-    'subsample': [0.8, 1.0]         
+    'n_estimators': [180, 220, 260, 300, 340],
+    'learning_rate': [0.08, 0.09, 0.1, 0.11, 0.12],    
+    'max_depth': [8, 9, 10],             
+    'subsample': [0.9, 1.0]
 }
 
 # %% [Markdown] 
@@ -218,14 +227,89 @@ def evaluate_xgb(EXTERNAL_FOLD_DIR, best_params):
 
 evaluate_xgb(EXTERNAL_FOLD_DIR, best_params_xgb)
 
+#%%
+# Carregar resultados da grid refinada
+df = pd.read_csv(os.path.join(GRID_SEARCH_DIR, "xgb_grid_summary.csv"))
+
+def pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size']):
+    df = df.copy()
+    df['_dominated'] = False
+    for i in range(len(df)):
+        for j in range(len(df)):
+            if i == j: continue
+            better_metric = df.loc[j, maximize] >= df.loc[i, maximize]
+            better_costs = all(df.loc[j, c] <= df.loc[i, c] for c in minimize)
+            strictly_better = (df.loc[j, maximize] > df.loc[i, maximize]) or \
+                             any(df.loc[j, c] < df.loc[i, c] for c in minimize)
+            if better_metric and better_costs and strictly_better:
+                df.loc[i, '_dominated'] = True
+                break
+    return df[~df['_dominated']].drop(columns=['_dominated'])
+
+pareto = pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size'])
+
+# Visualização
+plt.figure(figsize=(12, 5))
+
+# F1 vs Tempo de Treino
+plt.subplot(1, 2, 1)
+plt.scatter(df['runtime_train'], df['f1'], c='gray', alpha=0.4, s=30, label='Todas combinações')
+plt.scatter(pareto['runtime_train'], pareto['f1'], c='red', s=80, 
+            edgecolors='black', linewidth=1.5, label='Fronteira de Pareto')
+plt.xlabel('Tempo de Treino (s)')
+plt.ylabel('F1 Score')
+plt.title('Trade-off: F1 vs Tempo de Treino')
+plt.legend()
+plt.grid(alpha=0.3)
+
+# F1 vs Tamanho do Modelo
+plt.subplot(1, 2, 2)
+plt.scatter(df['model_size']/1e6, df['f1'], c='gray', alpha=0.4, s=30, label='Todas combinações')
+plt.scatter(pareto['model_size']/1e6, pareto['f1'], c='red', s=80,
+            edgecolors='black', linewidth=1.5, label='Fronteira de Pareto')
+plt.xlabel('Tamanho do Modelo (MB)')
+plt.ylabel('F1 Score')
+plt.title('Trade-off: F1 vx Tamanho do Modelo')
+plt.legend()
+plt.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+pareto_sorted = pareto.sort_values('f1', ascending=False)[[
+    'combo_id', 'n_estimators', 'learning_rate', 'max_depth', 'subsample',
+    'f1', 'runtime_train', 'runtime_inf', 'model_size'
+]].copy()
+pareto_sorted['model_size_mb'] = (pareto_sorted['model_size'] / 1e6).round(2)
+pareto_sorted = pareto_sorted.drop(columns=['model_size'])
+display(pareto_sorted.reset_index(drop=True))
+
+best_f1 = pareto_sorted.iloc[0]
+best_speed = pareto_sorted.loc[pareto_sorted['runtime_train'].idxmin()]
+best_size = pareto_sorted.loc[pareto_sorted['model_size_mb'].idxmin()]
+
+print(f"\nF1: combo_id={int(best_f1['combo_id'])} → F1={best_f1['f1']:.4f}")
+print(f"menortempo: combo_id={int(best_speed['combo_id'])} → {best_speed['runtime_train']:.2f}s")
+print(f"menor tamanho: combo_id={int(best_size['combo_id'])} → {best_size['model_size_mb']:.2f}MB")
+
 
 #%% [Markdown] 
 #
-best_params_xgb = {
-    'n_estimators': 200,    
+'''best_params_xgb = {
+    'n_estimators': 300,    
     'learning_rate': 0.1,
-    'max_depth': 6,
+    'max_depth': 9,
     'subsample': 1,
+    'n_jobs': -1,
+    'random_state': 42,
+    'use_label_encoder': False,
+    'eval_metric': ['logloss', 'error'] 
+}'''
+best_params_xgb = {
+    'n_estimators': 220,    
+    'learning_rate': 0.09,
+    'max_depth': 10,
+    'subsample': 0.9,
     'n_jobs': -1,
     'random_state': 42,
     'use_label_encoder': False,
@@ -291,4 +375,100 @@ def plot_learning_curves(external_dir, params):
     plt.show()
 plot_learning_curves(EXTERNAL_FOLD_DIR, best_params_xgb)
 
+# %%
+df_summary = pd.read_csv(os.path.join(GRID_SEARCH_DIR, "xgb_grid_summary.csv"))
+
+best_row = df_summary[df_summary['combo_id'] == 40].iloc[0]
+best_params_xgb = {
+    'n_estimators': int(best_row['n_estimators']),
+    'learning_rate': float(best_row['learning_rate']),
+    'max_depth': int(best_row['max_depth']),
+    'subsample': float(best_row['subsample'])
+}
+
+print(best_params_xgb)
+# %%
+def plot_xgb_feature_importance(train_path, best_params, importance_type='gain', top_n=20, figsize=(10, 8)):
+ 
+    X_train, y_train = fold_loader(train_path)
+    
+    params = best_params.copy()
+    if 'n_estimators' in params: params['n_estimators'] = int(params['n_estimators'])
+    if 'max_depth' in params: params['max_depth'] = int(params['max_depth'])
+    
+    # Remove conflicting parameters
+    params.pop('n_jobs', None)
+    params.pop('random_state', None)
+    params.pop('use_label_encoder', None)
+    params.pop('eval_metric', None)
+    
+    model = XGBClassifier(
+        n_jobs=-1,
+        random_state=42,
+        use_label_encoder=False,
+        eval_metric='logloss',
+        **params
+    )
+    model.fit(X_train, y_train)
+    
+    booster = model.get_booster()
+    importance_dict = booster.get_score(importance_type=importance_type)
+    
+    feat_imp = pd.DataFrame({
+        'feature': list(importance_dict.keys()),
+        'importance': list(importance_dict.values())
+    }).sort_values('importance', ascending=False)
+    
+    feat_imp['importance_normalized'] = feat_imp['importance'] / feat_imp['importance'].sum()
+    
+    top_features = feat_imp.head(top_n)
+    
+    plt.figure(figsize=figsize)
+    sns.barplot(
+        data=top_features,
+        x='importance_normalized',
+        y='feature',
+        palette='rocket'
+    )
+    
+    plt.title(f'Features mais importantes  XGBoost ({importance_type})', 
+              fontsize=14, fontweight='bold')
+    plt.xlabel('Importância Normalizada', fontsize=11)
+    plt.ylabel('Feature', fontsize=11)
+    plt.grid(axis='x', alpha=0.3)
+    
+    for i, v in enumerate(top_features['importance_normalized']):
+        plt.text(v + 0.005, i, f'{v:.1%}', va='center', fontsize=9)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return feat_imp[['feature', 'importance', 'importance_normalized']]
+
+#%%
+train_path = os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold1_train.csv")
+
+best_params_xgb = {
+    'n_estimators': 220,    
+    'learning_rate': 0.09,
+    'max_depth': 10,
+    'subsample': 0.9,
+    'n_jobs': -1,
+    'random_state': 42,
+    'use_label_encoder': False,
+    'eval_metric': 'logloss'
+}
+
+feature_importance_xgb = plot_xgb_feature_importance(
+    train_path=train_path,
+    best_params=best_params_xgb,
+    importance_type='gain', 
+    top_n=20,
+    figsize=(10, 8)
+)
+
+feature_importance_xgb.to_csv(
+    os.path.join(GRID_SEARCH_DIR, "xgb_feature_importance.csv"),
+    index=False
+)
 # %%

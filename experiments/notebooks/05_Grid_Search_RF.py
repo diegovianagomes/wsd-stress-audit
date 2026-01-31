@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import math
 import matplotlib.pyplot as plt
+import seaborn as sns
 from tqdm import tqdm
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -151,6 +152,79 @@ def grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
 
 best_params = grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1")
 
+#%%
+# Carregar resultados do grid search do Random Forest
+GRID_SEARCH_DIR = r"C:\DEV\mestrado\WSD\experiments\folds\grid_search"
+df_rf = pd.read_csv(os.path.join(GRID_SEARCH_DIR, "grid_search_summary.csv"))
+
+def pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size']):
+    df = df.copy()
+    df['_dominated'] = False
+    for i in range(len(df)):
+        for j in range(len(df)):
+            if i == j: 
+                continue
+            # Verifica se j domina i: melhor F1 E menor custo
+            better_f1 = df.loc[j, maximize] >= df.loc[i, maximize]
+            better_costs = all(df.loc[j, c] <= df.loc[i, c] for c in minimize)
+            strictly_better = (df.loc[j, maximize] > df.loc[i, maximize]) or \
+                             any(df.loc[j, c] < df.loc[i, c] for c in minimize)
+            if better_f1 and better_costs and strictly_better:
+                df.loc[i, '_dominated'] = True
+                break
+    return df[~df['_dominated']].drop(columns=['_dominated'])
+
+pareto_rf = pareto_front(df_rf, maximize='f1', minimize=['runtime_train', 'model_size'])
+
+plt.figure(figsize=(14, 5))
+
+# F1 vs Tempo de Treino
+plt.subplot(1, 2, 1)
+plt.scatter(df_rf['runtime_train'], df_rf['f1'], 
+           c='gray', alpha=0.5, s=40, label='Todas combinações')
+plt.scatter(pareto_rf['runtime_train'], pareto_rf['f1'], 
+           c='red', s=100, edgecolors='black', linewidth=1.5, 
+           label='Fronteira de Pareto', zorder=5)
+plt.xlabel('Tempo de Treino (s)', fontsize=11)
+plt.ylabel('F1 Score', fontsize=11)
+plt.title('Random Forest: F1 vs Tempo de Treino', fontsize=12, fontweight='bold')
+plt.legend()
+plt.grid(alpha=0.3)
+
+# F1 vs Tamanho do Modelo
+plt.subplot(1, 2, 2)
+plt.scatter(df_rf['model_size']/1e6, df_rf['f1'], 
+           c='gray', alpha=0.5, s=40, label='Todas combinações')
+plt.scatter(pareto_rf['model_size']/1e6, pareto_rf['f1'], 
+           c='red', s=100, edgecolors='black', linewidth=1.5, 
+           label='Fronteira de Pareto', zorder=5)
+plt.xlabel('Tamanho do Modelo (MB)', fontsize=11)
+plt.ylabel('F1 Score', fontsize=11)
+plt.title('Random Forest: F1 vx Tamanho do Modelo', fontsize=12, fontweight='bold')
+plt.legend()
+plt.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+
+pareto_table = pareto_rf.sort_values('f1', ascending=False)[[
+    'combo_id', 'n_estimators', 'max_features', 'min_samples_leaf',
+    'f1', 'runtime_train', 'runtime_inf', 'model_size'
+]].copy()
+pareto_table['model_size_mb'] = (pareto_table['model_size'] / 1e6).round(2)
+pareto_table = pareto_table.drop(columns=['model_size']).reset_index(drop=True)
+
+best_f1_row = pareto_table.iloc[0]
+print(f"Melhor F1: combo_id={int(best_f1_row['combo_id'])} → F1={best_f1_row['f1']:.4f} "
+      f"(n_est={int(best_f1_row['n_estimators'])}, max_feat={best_f1_row['max_features']}, "
+      f"min_leaf={int(best_f1_row['min_samples_leaf'])})")
+
+fastest = pareto_table.loc[pareto_table['runtime_train'].idxmin()]
+smallest = pareto_table.loc[pareto_table['model_size_mb'].idxmin()]
+
+print(f"\nmenor tempo: combo_id={int(fastest['combo_id'])} → {fastest['runtime_train']:.2f}s (F1={fastest['f1']:.4f})")
+print(f"menor tamanho: combo_id={int(smallest['combo_id'])} → {smallest['model_size_mb']:.2f}MB (F1={smallest['f1']:.4f})")
 # %%[Markdown] 
 # Avaliação com o fold externo
 def evaluate_model(EXTERNAL_FOLD_DIR, best_params):
@@ -296,3 +370,82 @@ def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
 plot_learning_curves(EXTERNAL_FOLD_DIR, best_params_rf)
 
 #%%
+def plot_rf_feature_importance(train_path, best_params, top_n=20, figsize=(10, 8)):
+
+    # Carregar dados
+    X_train, y_train = fold_loader(train_path)
+    
+    # Remove n_jobs from best_params if it exists to avoid conflict
+    params = best_params.copy()
+    params.pop('n_jobs', None)  # Remove n_jobs if present
+    
+    # Treinar modelo
+    model = RandomForestClassifier(
+        n_jobs=-1,
+        **params
+    )
+    model.fit(X_train, y_train)
+    
+    # Extrair importâncias
+    importances = model.feature_importances_
+    feature_names = X_train.columns
+    
+    # Criar DataFrame e ordenar
+    feat_imp = pd.DataFrame({
+        'feature': feature_names,
+        'importance': importances
+    }).sort_values('importance', ascending=False)
+    
+    # Selecionar top N
+    top_features = feat_imp.head(top_n)
+    
+    # Plotar
+    plt.figure(figsize=figsize)
+    sns.barplot(
+        data=top_features,
+        x='importance',
+        y='feature',
+        palette='viridis'
+    )
+    
+    plt.title(f'Features mais importantes para Random Forest', fontsize=14, fontweight='bold')
+    plt.xlabel('Importância Média (Mean Decrease Impurity)', fontsize=11)
+    plt.ylabel('Feature', fontsize=11)
+    plt.grid(axis='x', alpha=0.3)
+    
+    # Adicionar valores nas barras
+    for i, v in enumerate(top_features['importance']):
+        plt.text(v + 0.001, i, f'{v:.4f}', va='center', fontsize=9)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Retornar DataFrame completo para análise posterior
+    return feat_imp
+# %%
+# Selecionar um fold externo para análise (ex: fold 0)
+train_path = os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold1_train.csv")
+
+# Parâmetros ótimos do Random Forest
+best_params_rf = {
+    'n_estimators': 250,      
+    'max_features': 0.6,
+    'min_samples_leaf': 1,
+    'n_jobs': -1,
+    'random_state': 42
+}
+
+# Gerar visualização das features mais importantes
+feature_importance_df = plot_rf_feature_importance(
+    train_path=train_path,
+    best_params=best_params_rf,
+    top_n=20,
+    figsize=(10, 8)
+)
+
+# Opcional: salvar o ranking completo em CSV
+feature_importance_df.to_csv(
+    os.path.join(GRID_SEARCH_DIR, "rf_feature_importance.csv"),
+    index=False
+)
+# %%
