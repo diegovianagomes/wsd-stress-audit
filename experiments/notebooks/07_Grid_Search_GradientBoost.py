@@ -1,4 +1,4 @@
-# %% 
+# %%
 import os
 import io
 import time
@@ -10,32 +10,22 @@ import math
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import (
-    roc_auc_score, 
-    f1_score, 
-    precision_score, 
-    recall_score, 
-    auc, precision_recall_curve, 
-    log_loss, 
-    confusion_matrix, 
-    ConfusionMatrixDisplay, 
-    RocCurveDisplay
+    roc_auc_score, f1_score, precision_score, recall_score, 
+    auc, precision_recall_curve, log_loss
 )
-
 
 BASE_DIR = r"C:\DEV\mestrado\WSD\experiments"
 FOLDS_DIR = os.path.join(BASE_DIR, "folds")
 
 EXTERNAL_FOLD_DIR = os.path.join(FOLDS_DIR, "external_folds")
 INTERNAL_FOLDS_DIR = os.path.join(FOLDS_DIR, "internal_folds")
-GRID_SEARCH_DIR = os.path.join(FOLDS_DIR, "grid_search")
+GB_GRID_SEARCH_DIR = os.path.join(FOLDS_DIR, "gb_grid_search")
 
-os.makedirs(GRID_SEARCH_DIR, exist_ok=True)
+os.makedirs(GB_GRID_SEARCH_DIR, exist_ok=True)
 
 TARGET = "label"
-base_seed = 42
-
 
 # %% Data Loader
 def fold_loader(path_csv):
@@ -54,19 +44,19 @@ def fold_loader(path_csv):
     y = df[TARGET]
     return X, y
 
-#%%[Markdown]
-# PARAMETROS INICIAIS
+# %%[Markdown]
+# Parâmetros para Gradient Boosting
 
 param_grid = {
-    'n_estimators': [150, 200, 250],
-    'max_features': [0.6, 0.7, 0.8],
-    'min_samples_leaf': [1, 2, 3]
+    'n_estimators': [100, 150, 200],
+    'learning_rate': [0.05, 0.1, 0.15],
+    'max_depth': [3, 4, 5]
 }
 
 # %%[Markdown]
-# GRID SEARCH COM OS FOLDS INTERNOS
+# Grid Search com os Folds Internos
 
-def grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
+def grid_search_gb(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
     
     param_names = list(param_grid.keys())
     param_values = list(param_grid.values())
@@ -87,12 +77,13 @@ def grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
     for comb_id, combo in tqdm(df_combinations.iterrows(), total=len(df_combinations), desc="Avaliando Combinações"):
         params = combo.to_dict()
         
+        # Ajuste dos tipos
         if 'n_estimators' in params: params['n_estimators'] = int(params['n_estimators'])
-        if 'min_samples_leaf' in params: params['min_samples_leaf'] = int(params['min_samples_leaf'])
+        if 'max_depth' in params: params['max_depth'] = int(params['max_depth'])
         
         metrics_folds = []
 
-        # TREINO E VALIDAÇÃO
+        # Loop de Treino de Validação dos folds internos
         for fold in folds:
             train_path = os.path.join(INTERNAL_FOLDS_DIR, f"STRESS_train_{fold}.csv")
             val_path = os.path.join(INTERNAL_FOLDS_DIR, f"STRESS_val_{fold}.csv")
@@ -100,7 +91,7 @@ def grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
             X_train, y_train = fold_loader(train_path)
             X_val, y_val = fold_loader(val_path)
 
-            model = RandomForestClassifier(n_jobs=-1, random_state=42, **params)
+            model = GradientBoostingClassifier(random_state=42, **params)
             
             # TREINO
             start = time.time()
@@ -120,15 +111,12 @@ def grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
 
             # MÉTRICAS
             precision_curve, recall_curve, _ = precision_recall_curve(y_val, y_proba)
-            roc_auc = roc_auc_score(y_val, y_proba)
-            auprc = auc(recall_curve, precision_curve)
-            
             
             metrics = {
                 "combination_id": comb_id,
                 "fold": fold,
-                "roc_auc": roc_auc,
-                "auprc": auprc,
+                "roc_auc": roc_auc_score(y_val, y_proba),
+                "auprc": auc(recall_curve, precision_curve),
                 "f1": f1_score(y_val, y_pred),
                 "precision": precision_score(y_val, y_pred),
                 "recall": recall_score(y_val, y_pred),
@@ -146,12 +134,11 @@ def grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
     df_summary = pd.DataFrame(rows_summary)
     df_folds = pd.DataFrame(rows_folds)
     
-    df_summary.to_csv(os.path.join(GRID_SEARCH_DIR, "grid_search_summary.csv"), index=False)
-    df_folds.to_csv(os.path.join(GRID_SEARCH_DIR, "grid_search_folds_detail.csv"), index=False)
+    df_summary.to_csv(os.path.join(GB_GRID_SEARCH_DIR, "gb_grid_search_summary.csv"), index=False)
+    df_folds.to_csv(os.path.join(GB_GRID_SEARCH_DIR, "gb_grid_search_folds_detail.csv"), index=False)
     
     df_summary = df_summary.sort_values(by=metric_sort, ascending=False)
     
-
     display(df_summary)
     
     best_combo = df_summary.iloc[0]
@@ -160,13 +147,11 @@ def grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
     
     return best_combo[param_names].to_dict()
 
-best_params = grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1")
+best_params_gb = grid_search_gb(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1")
 
 #%%
-# Carregar resultados do grid search do Random Forest
-GRID_SEARCH_DIR = r"C:\DEV\mestrado\WSD\experiments\folds\grid_search"
-df_rf = pd.read_csv(os.path.join(GRID_SEARCH_DIR, "grid_search_summary.csv"))
-
+# Carregar resultados do grid search do Gradient Boosting
+df_gb = pd.read_csv(os.path.join(GB_GRID_SEARCH_DIR, "gb_grid_search_summary.csv"))
 
 def pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size']):
     df = df.copy()
@@ -185,33 +170,33 @@ def pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size']):
                 break
     return df[~df['_dominated']].drop(columns=['_dominated'])
 
-pareto_rf = pareto_front(df_rf, maximize='f1', minimize=['runtime_train', 'model_size'])
+pareto_gb = pareto_front(df_gb, maximize='f1', minimize=['runtime_train', 'model_size'])
 
 plt.figure(figsize=(14, 5))
 
 # F1 vs Tempo de Treino
 plt.subplot(1, 2, 1)
-plt.scatter(df_rf['runtime_train'], df_rf['f1'], 
+plt.scatter(df_gb['runtime_train'], df_gb['f1'], 
            c='gray', alpha=0.5, s=40, label='Todas combinações')
-plt.scatter(pareto_rf['runtime_train'], pareto_rf['f1'], 
+plt.scatter(pareto_gb['runtime_train'], pareto_gb['f1'], 
            c='red', s=100, edgecolors='black', linewidth=1.5, 
            label='Fronteira de Pareto', zorder=5)
 plt.xlabel('Tempo de Treino (s)', fontsize=11)
 plt.ylabel('F1 Score', fontsize=11)
-plt.title('Random Forest: F1 vs Tempo de Treino', fontsize=12, fontweight='bold')
+plt.title('Gradient Boosting: F1 vs Tempo de Treino', fontsize=12, fontweight='bold')
 plt.legend()
 plt.grid(alpha=0.3)
 
 # F1 vs Tamanho do Modelo
 plt.subplot(1, 2, 2)
-plt.scatter(df_rf['model_size']/1e6, df_rf['f1'], 
+plt.scatter(df_gb['model_size']/1e6, df_gb['f1'], 
            c='gray', alpha=0.5, s=40, label='Todas combinações')
-plt.scatter(pareto_rf['model_size']/1e6, pareto_rf['f1'], 
+plt.scatter(pareto_gb['model_size']/1e6, pareto_gb['f1'], 
            c='red', s=100, edgecolors='black', linewidth=1.5, 
            label='Fronteira de Pareto', zorder=5)
 plt.xlabel('Tamanho do Modelo (MB)', fontsize=11)
 plt.ylabel('F1 Score', fontsize=11)
-plt.title('Random Forest: F1 vx Tamanho do Modelo', fontsize=12, fontweight='bold')
+plt.title('Gradient Boosting: F1 vx Tamanho do Modelo', fontsize=12, fontweight='bold')
 plt.legend()
 plt.grid(alpha=0.3)
 
@@ -219,8 +204,8 @@ plt.tight_layout()
 plt.show()
 
 
-pareto_table = pareto_rf.sort_values('f1', ascending=False)[[
-    'combo_id', 'n_estimators', 'max_features', 'min_samples_leaf',
+pareto_table = pareto_gb.sort_values('f1', ascending=False)[[
+    'combo_id', 'n_estimators', 'learning_rate', 'max_depth',
     'f1', 'runtime_train', 'runtime_inf', 'model_size'
 ]].copy()
 pareto_table['model_size_mb'] = (pareto_table['model_size'] / 1e6).round(2)
@@ -228,17 +213,18 @@ pareto_table = pareto_table.drop(columns=['model_size']).reset_index(drop=True)
 
 best_f1_row = pareto_table.iloc[0]
 print(f"Melhor F1: combo_id={int(best_f1_row['combo_id'])} → F1={best_f1_row['f1']:.4f} "
-      f"(n_est={int(best_f1_row['n_estimators'])}, max_feat={best_f1_row['max_features']}, "
-      f"min_leaf={int(best_f1_row['min_samples_leaf'])})")
+      f"(n_est={int(best_f1_row['n_estimators'])}, lr={best_f1_row['learning_rate']}, "
+      f"max_depth={int(best_f1_row['max_depth'])})")
 
 fastest = pareto_table.loc[pareto_table['runtime_train'].idxmin()]
 smallest = pareto_table.loc[pareto_table['model_size_mb'].idxmin()]
 
 print(f"\nmenor tempo: combo_id={int(fastest['combo_id'])} → {fastest['runtime_train']:.2f}s (F1={fastest['f1']:.4f})")
 print(f"menor tamanho: combo_id={int(smallest['combo_id'])} → {smallest['model_size_mb']:.2f}MB (F1={smallest['f1']:.4f})")
+
 # %%[Markdown] 
 # Avaliação com o fold externo
-def evaluate_model(EXTERNAL_FOLD_DIR, best_params):
+def evaluate_model_gb(EXTERNAL_FOLD_DIR, best_params):
     
     folds = sorted([
         int(f.replace("STRESS_fold", "").replace("_train.csv", ""))
@@ -252,7 +238,7 @@ def evaluate_model(EXTERNAL_FOLD_DIR, best_params):
     
     # Ajuste dis tipos
     if 'n_estimators' in best_params: best_params['n_estimators'] = int(best_params['n_estimators'])
-    if 'min_samples_leaf' in best_params: best_params['min_samples_leaf'] = int(best_params['min_samples_leaf'])
+    if 'max_depth' in best_params: best_params['max_depth'] = int(best_params['max_depth'])
 
     for fold in tqdm(folds, desc="Folds Externos"):
 
@@ -262,7 +248,7 @@ def evaluate_model(EXTERNAL_FOLD_DIR, best_params):
         X_train, y_train = fold_loader(train_path)
         X_test, y_test = fold_loader(test_path)
         
-        model = RandomForestClassifier(n_jobs=-1, random_state=42, **best_params)
+        model = GradientBoostingClassifier(random_state=42, **best_params)
         model.fit(X_train, y_train)
         
         y_pred = model.predict(X_test)
@@ -281,24 +267,23 @@ def evaluate_model(EXTERNAL_FOLD_DIR, best_params):
         })
     
     df_results = pd.DataFrame(rows_eval)
-    output_path = os.path.join(GRID_SEARCH_DIR, "Evaluation_results.csv")
+    output_path = os.path.join(GB_GRID_SEARCH_DIR, "GB_Evaluation_results.csv")
     df_results.to_csv(output_path, index=False)
     
     display(df_results.mean(numeric_only=True))
 
-evaluate_model(EXTERNAL_FOLD_DIR, best_params)
-
+evaluate_model_gb(EXTERNAL_FOLD_DIR, best_params_gb)
 
 #%%
-best_params_rf = {
-    'n_estimators': 250,      
-    'max_features': 0.6,
-    'min_samples_leaf': 1,
-    'n_jobs': -1,
+best_params_gb_final = {
+    'n_estimators': 200,      
+    'learning_rate': 0.15,
+    'max_depth': 5,
     'random_state': 42
 }
+
 #%%
-def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
+def plot_learning_curves_gb(EXTERNAL_FOLD_DIR, params):
 
     folds = sorted([
         int(f.replace("STRESS_fold", "").replace("_train.csv", ""))
@@ -314,17 +299,13 @@ def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 4 * n_rows))
     axes = axes.flatten()
     
-    step_size = 5 
-    
+    step_size = 10 
     max_trees = params['n_estimators']
     
-    rf_params = params.copy()
-    
-    if 'n_estimators' in rf_params:
-        del rf_params['n_estimators']
-    
-    if 'random_state' in rf_params:
-        del rf_params['random_state']
+    # Remover n_estimators e random_state dos parâmetros base
+    gb_params = params.copy()
+    gb_params.pop('n_estimators', None)  # Remover n_estimators
+    gb_params.pop('random_state', None)
 
     for i, fold in enumerate(tqdm(folds, desc="Processando Folds")):
         ax = axes[i]
@@ -339,16 +320,16 @@ def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
         test_loss = []
         n_trees_axis = []
         
-        base_seed = 42 
-
-        for n_trees in range(step_size, max_trees + 1, step_size):
-            
-            model = RandomForestClassifier(
-                n_estimators=n_trees, 
-                random_state=base_seed,  
-                **rf_params
-            )
+        # Agora n_estimators não está mais em gb_params
+        model = GradientBoostingClassifier(
+            n_estimators=step_size,  # Começar com step_size ao invés de 0
+            random_state=42,
+            warm_start=True,
+            **gb_params
+        )
         
+        for n_trees in range(step_size, max_trees + 1, step_size):
+            model.set_params(n_estimators=n_trees)
             model.fit(X_train, y_train)
             
             proba_train = model.predict_proba(X_train)
@@ -364,7 +345,7 @@ def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
         ax.plot(n_trees_axis, train_loss, label='Treino', color='blue', linewidth=1.5)
         ax.plot(n_trees_axis, test_loss, label='Teste (Validação)', color='orange', linewidth=2)
         
-        ax.set_title(f"Fold {fold} (RF)", fontsize=12, fontweight='bold')
+        ax.set_title(f"Fold {fold} (GB)", fontsize=12, fontweight='bold')
         ax.set_ylabel('Log Loss')
         ax.set_xlabel('Número de Árvores (n_estimators)')
         ax.legend()
@@ -377,7 +358,6 @@ def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
         ax.axvline(min_loss_trees, color='red', linestyle='--', alpha=0.5)
         ax.text(min_loss_trees, min_loss_val, f' Min: {min_loss_val:.3f}', color='red', fontsize=9)
 
-
     for j in range(i + 1, len(axes)):
         fig.delaxes(axes[j])
 
@@ -385,21 +365,20 @@ def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
     plt.show()
 
 
-plot_learning_curves(EXTERNAL_FOLD_DIR, best_params_rf)
+plot_learning_curves_gb(EXTERNAL_FOLD_DIR, best_params_gb_final)
 
 #%%
-def plot_rf_feature_importance(train_path, best_params, top_n=20, figsize=(10, 8)):
+def plot_gb_feature_importance(train_path, best_params, top_n=20, figsize=(10, 8)):
 
     # Carregar dados
     X_train, y_train = fold_loader(train_path)
     
-    # Remove n_jobs from best_params if it exists to avoid conflict
+    # Remove random_state from best_params if it exists to avoid conflict
     params = best_params.copy()
-    params.pop('n_jobs', None) 
+    params.pop('random_state', None)
     
     # Treinar modelo
-    model = RandomForestClassifier(
-        n_jobs=-1,
+    model = GradientBoostingClassifier(
         **params
     )
     model.fit(X_train, y_train)
@@ -426,8 +405,8 @@ def plot_rf_feature_importance(train_path, best_params, top_n=20, figsize=(10, 8
         palette='viridis'
     )
     
-    plt.title(f'Features mais importantes para Random Forest', fontsize=14, fontweight='bold')
-    plt.xlabel('Importância Média (Mean Decrease Impurity)', fontsize=11)
+    plt.title(f'Features mais importantes para Gradient Boosting', fontsize=14, fontweight='bold')
+    plt.xlabel('Importância Média (Feature Importance)', fontsize=11)
     plt.ylabel('Feature', fontsize=11)
     plt.grid(axis='x', alpha=0.3)
     
@@ -440,100 +419,111 @@ def plot_rf_feature_importance(train_path, best_params, top_n=20, figsize=(10, 8
     
     # Retornar DataFrame completo para análise posterior
     return feat_imp
-    
-    # Retornar DataFrame completo para análise posterior
-    return feat_imp
-# %%
-# Selecionar um fold externo para análise 
-train_path = os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold5_train.csv")
 
-feature_importance_df = plot_rf_feature_importance(
+# %%
+# Selecionar um fold externo para análise (ex: fold 1)
+train_path = os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold1_train.csv")
+#%%
+# Parâmetros ótimos do Gradient Boosting
+best_params_gb_final = {
+    'n_estimators': 200,      
+    'learning_rate': 0.15,
+    'max_depth': 5,
+    'random_state': 42
+}
+
+# Gerar visualização das features mais importantes
+feature_importance_df = plot_gb_feature_importance(
     train_path=train_path,
-    best_params=best_params_rf,
+    best_params=best_params_gb_final,
     top_n=20,
     figsize=(10, 8)
 )
 
 feature_importance_df.to_csv(
-    os.path.join(GRID_SEARCH_DIR, "rf_feature_importance.csv"),
+    os.path.join(GB_GRID_SEARCH_DIR, "gb_feature_importance.csv"),
     index=False
 )
 #%%
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, RocCurveDisplay
 
-rf_params = {
-    'n_estimators': 250,      
-    'max_features': 0.6,
-    #'max_depth': 15,          
-    'min_samples_leaf': 1,   
-    'n_jobs': -1,             
-    'random_state': 42
-}
-
-#  IDENTIFICAÇÃO DOS FOLDS
+# 1. Identificar os Folds
 folds = sorted([
     int(f.replace("STRESS_fold", "").replace("_train.csv", ""))
     for f in os.listdir(EXTERNAL_FOLD_DIR) 
     if f.startswith("STRESS_fold") and f.endswith("_train.csv")
 ])
 
-print(f"Total de Folds: {len(folds)}")
+print(f"Coletando predições de {len(folds)} folds externos...")
 
-all_y_test_rf = []
-all_y_pred_rf = []
-all_y_proba_rf = []
+# Listas para guardar todos os dados de todos os folds
+all_y_test = []
+all_y_proba = [] # Probabilidades (para ROC)
+all_y_pred = []  # Predição final 0 ou 1 (para Matriz de Confusão)
 
-# AVALIAÇÃO COM OS FOLDS EXTERNOS
-for fold in tqdm(folds, desc="Avaliando Random Forest nos Folds"):
+# 2. Loop para treinar e predizer em todos os folds
+for fold in tqdm(folds, desc="Avaliando Folds Externos"):
     train_path = os.path.join(EXTERNAL_FOLD_DIR, f"STRESS_fold{fold}_train.csv")
     test_path = os.path.join(EXTERNAL_FOLD_DIR, f"STRESS_fold{fold}_test.csv")
     
     X_train, y_train = fold_loader(train_path)
     X_test, y_test = fold_loader(test_path)
     
-    model = RandomForestClassifier(**rf_params)
+    # Criar modelo com os MELHORES parâmetros que achamos
+    model = GradientBoostingClassifier(**best_params_gb_final)
     model.fit(X_train, y_train)
     
+    # Fazer predições
     y_pred = model.predict(X_test)
-    y_proba = model.predict_proba(X_test)[:, 1]
+    y_proba = model.predict_proba(X_test)[:, 1] # Pega a probabilidade da classe 1 (Stress)
     
-    all_y_test_rf.extend(y_test)
-    all_y_pred_rf.extend(y_pred)
-    all_y_proba_rf.extend(y_proba)
+    # Guardar tudo
+    all_y_test.extend(y_test)
+    all_y_pred.extend(y_pred)
+    all_y_proba.extend(y_proba)
 
+print("Fim da coleta! Gerando gráficos...")
 
-
+# --- GRÁFICO 1: MATRIZ DE CONFUSÃO ---
 fig, ax = plt.subplots(figsize=(6, 5))
-cm_rf = confusion_matrix(all_y_test_rf, all_y_pred_rf)
-disp_rf = ConfusionMatrixDisplay(
-    confusion_matrix=cm_rf, 
+
+cm = confusion_matrix(all_y_test, all_y_pred)
+
+# Configurações do display
+disp = ConfusionMatrixDisplay(
+    confusion_matrix=cm, 
     display_labels=['Rest (0)', 'Stress (1)']
 )
 
-disp_rf.plot(
+disp.plot(
     ax=ax, 
-    cmap='Purples',
-    values_format='d'
+    cmap='Blues', 
+    values_format='d' # 'd' para números inteiros
 )
 
-plt.title('Matriz de Confusão - Random Forest ', fontsize=14, fontweight='bold')
-plt.grid(False)
+plt.title('Matriz de Confusão (Total dos Folds)', fontsize=14, fontweight='bold')
+plt.grid(False) # Tira o grid padrão para ficar mais limpo
 plt.show()
 
 
+# --- GRÁFICO 2: CURVA ROC ---
 fig, ax = plt.subplots(figsize=(7, 6))
 
+# Plota a Curva ROC
 RocCurveDisplay.from_predictions(
-    all_y_test_rf, 
-    all_y_proba_rf, 
+    all_y_test, 
+    all_y_proba, 
     ax=ax, 
-    name="Random Forest",
-    color="purple", 
+    name="Gradient Boosting",
+    color="darkorange",
     lw=2
 )
 
+# Linha pontilhada (chute aleatório)
 ax.plot([0, 1], [0, 1], "k--", lw=2, label="Aleatório (chance)")
 
-ax.set_title("Curva ROC - Random Forest (Total dos Folds)", fontsize=14, fontweight='bold')
+# Configurações
+ax.set_title("Curva ROC (Total dos Folds)", fontsize=14, fontweight='bold')
 ax.set_xlabel("Taxa de Falsos Positivos", fontsize=12)
 ax.set_ylabel("Taxa de Verdadeiros Positivos", fontsize=12)
 ax.legend(loc="lower right")
@@ -541,18 +531,6 @@ ax.grid(alpha=0.3)
 
 plt.show()
 
+print("Processo concluído!")
 
-# %%
-# %% Salvar melhor modelo
-MODEL_SAVE_PATH = os.path.join(BASE_DIR, "best_rf_model.pkl")
-
-# Treino final com os melhores parâmetros identificados
-X_final, y_final = fold_loader(os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold5_train.csv"))
-final_model = RandomForestClassifier(**best_params_rf)
-final_model.fit(X_final, y_final)
-
-with open(MODEL_SAVE_PATH, 'wb') as f:
-    pickle.dump(final_model, f)
-
-print(f"Modelo salvo em: {MODEL_SAVE_PATH}")
 # %%

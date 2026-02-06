@@ -1,5 +1,5 @@
 # %% [Markdown] 
-#
+# Importações e Configurações Iniciais
 import os
 import io
 import matplotlib.pyplot as plt
@@ -14,10 +14,10 @@ from tqdm import tqdm
 from xgboost import XGBClassifier 
 from sklearn.metrics import (
     roc_auc_score, f1_score, precision_score, recall_score, 
-    auc, precision_recall_curve
+    auc, precision_recall_curve, confusion_matrix, 
+    ConfusionMatrixDisplay, RocCurveDisplay
 )
 
-# 
 BASE_DIR = r"C:\DEV\mestrado\WSD\experiments"
 FOLDS_DIR = os.path.join(BASE_DIR, "folds")
 
@@ -42,17 +42,7 @@ def fold_loader(path_csv):
     return X, y
 
 #%% [Markdown] 
-# parâmetros para XGBoost
-
-#
-'''param_grid_xgb = {
-    'n_estimators': [50, 100, 200, 300],
-    'learning_rate': [0.01, 0.05, 0.1, 0.3],    
-    'max_depth': [3, 5, 7, 9],             
-    'subsample': [0.6, 0.8, 1.0]         
-}'''
-
-# parametros focando nos melhores 131-179
+# Definição do Grid de Hiperparâmetros
 param_grid_xgb = {
     'n_estimators': [180, 220, 260, 300, 340],
     'learning_rate': [0.08, 0.09, 0.1, 0.11, 0.12],    
@@ -61,7 +51,7 @@ param_grid_xgb = {
 }
 
 # %% [Markdown] 
-# Grid Search 
+# Grid Search XGBoost
 def grid_search_xgb(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
         
     param_names = list(param_grid.keys())
@@ -112,7 +102,7 @@ def grid_search_xgb(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
             y_proba = model.predict_proba(X_val)[:, 1]
             runtime_inf = time.time() - start
             
-            # TAMANHO
+            # TAMANHO DO MODELO
             buffer = io.BytesIO()
             pickle.dump(model, buffer)
             model_size = buffer.tell()
@@ -141,6 +131,7 @@ def grid_search_xgb(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
             metrics_folds.append(metrics)
 
         avg_metrics = pd.DataFrame(metrics_folds).mean(numeric_only=True).to_dict()
+        # Remove colunas não numéricas ou de ID do dicionário de média
         for k in ['fold', 'combination_id']: 
             if k in avg_metrics: del avg_metrics[k]
 
@@ -162,17 +153,17 @@ def grid_search_xgb(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
     display(df_summary.head(5))
     
     best_combo = df_summary.iloc[0]
-    print(f"\nMelhor Combinação XGBoost:")
+    print(f"\nMelhor Combinação XGBoost (Combo ID {best_combo['combo_id']}):")
     print(best_combo[param_names])
     
     return best_combo[param_names].to_dict()
 
+# Executa o Grid Search
 best_params_xgb = grid_search_xgb(INTERNAL_FOLDS_DIR, param_grid_xgb, metric_sort="f1")
 
 # %% [Markdown] 
-# Avaliação final 
+# Avaliação Externa (Quick Check)
 def evaluate_xgb(EXTERNAL_FOLD_DIR, best_params):
-
     
     folds = sorted([
         int(f.replace("STRESS_fold", "").replace("_train.csv", ""))
@@ -194,7 +185,6 @@ def evaluate_xgb(EXTERNAL_FOLD_DIR, best_params):
         X_train, y_train = fold_loader(train_path)
         X_test, y_test = fold_loader(test_path)
         
-        # TREINO FINAL
         model = XGBClassifier(
             n_jobs=-1, 
             random_state=42, 
@@ -224,11 +214,10 @@ def evaluate_xgb(EXTERNAL_FOLD_DIR, best_params):
     
     display(df_results.mean(numeric_only=True))
 
-
 evaluate_xgb(EXTERNAL_FOLD_DIR, best_params_xgb)
 
-#%%
-# Carregar resultados da grid refinada
+# %% [Markdown] 
+# Análise de Pareto
 df = pd.read_csv(os.path.join(GRID_SEARCH_DIR, "xgb_grid_summary.csv"))
 
 def pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size']):
@@ -248,34 +237,35 @@ def pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size']):
 
 pareto = pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size'])
 
-# Visualização
+# Visualização Pareto
 plt.figure(figsize=(12, 5))
 
-# F1 vs Tempo de Treino
+# F1 vs Tempo
 plt.subplot(1, 2, 1)
 plt.scatter(df['runtime_train'], df['f1'], c='gray', alpha=0.4, s=30, label='Todas combinações')
 plt.scatter(pareto['runtime_train'], pareto['f1'], c='red', s=80, 
             edgecolors='black', linewidth=1.5, label='Fronteira de Pareto')
 plt.xlabel('Tempo de Treino (s)')
 plt.ylabel('F1 Score')
-plt.title('Trade-off: F1 vs Tempo de Treino')
+plt.title('XGBoost: F1 vs Tempo de Treino')
 plt.legend()
 plt.grid(alpha=0.3)
 
-# F1 vs Tamanho do Modelo
+# F1 vs Tamanho
 plt.subplot(1, 2, 2)
 plt.scatter(df['model_size']/1e6, df['f1'], c='gray', alpha=0.4, s=30, label='Todas combinações')
 plt.scatter(pareto['model_size']/1e6, pareto['f1'], c='red', s=80,
             edgecolors='black', linewidth=1.5, label='Fronteira de Pareto')
 plt.xlabel('Tamanho do Modelo (MB)')
 plt.ylabel('F1 Score')
-plt.title('Trade-off: F1 vx Tamanho do Modelo')
+plt.title('XGBoost: F1 vs Tamanho do Modelo')
 plt.legend()
 plt.grid(alpha=0.3)
 
 plt.tight_layout()
 plt.show()
 
+# Tabela Pareto
 pareto_sorted = pareto.sort_values('f1', ascending=False)[[
     'combo_id', 'n_estimators', 'learning_rate', 'max_depth', 'subsample',
     'f1', 'runtime_train', 'runtime_inf', 'model_size'
@@ -284,39 +274,8 @@ pareto_sorted['model_size_mb'] = (pareto_sorted['model_size'] / 1e6).round(2)
 pareto_sorted = pareto_sorted.drop(columns=['model_size'])
 display(pareto_sorted.reset_index(drop=True))
 
-best_f1 = pareto_sorted.iloc[0]
-best_speed = pareto_sorted.loc[pareto_sorted['runtime_train'].idxmin()]
-best_size = pareto_sorted.loc[pareto_sorted['model_size_mb'].idxmin()]
-
-print(f"\nF1: combo_id={int(best_f1['combo_id'])} → F1={best_f1['f1']:.4f}")
-print(f"menortempo: combo_id={int(best_speed['combo_id'])} → {best_speed['runtime_train']:.2f}s")
-print(f"menor tamanho: combo_id={int(best_size['combo_id'])} → {best_size['model_size_mb']:.2f}MB")
-
-
-#%% [Markdown] 
-#
-'''best_params_xgb = {
-    'n_estimators': 300,    
-    'learning_rate': 0.1,
-    'max_depth': 9,
-    'subsample': 1,
-    'n_jobs': -1,
-    'random_state': 42,
-    'use_label_encoder': False,
-    'eval_metric': ['logloss', 'error'] 
-}'''
-best_params_xgb = {
-    'n_estimators': 220,    
-    'learning_rate': 0.09,
-    'max_depth': 10,
-    'subsample': 0.9,
-    'n_jobs': -1,
-    'random_state': 42,
-    'use_label_encoder': False,
-    'eval_metric': ['logloss', 'error'] 
-}
-#%% [Markdown] 
-# Curva
+# %% [Markdown] 
+# Curvas de Aprendizado (Learning Curves)
 def plot_learning_curves(external_dir, params):
     
     folds = sorted([
@@ -325,7 +284,6 @@ def plot_learning_curves(external_dir, params):
         if f.startswith("STRESS_fold") and f.endswith("_train.csv")
     ])
     
-
     n_folds = len(folds)
     n_cols = 2
     n_rows = math.ceil(n_folds / n_cols)
@@ -333,7 +291,7 @@ def plot_learning_curves(external_dir, params):
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 4 * n_rows))
     axes = axes.flatten()
     
-    for i, fold in enumerate(tqdm(folds, desc="Treinamento")):
+    for i, fold in enumerate(tqdm(folds, desc="Gerando Learning Curves")):
         ax = axes[i]
         
         train_path = os.path.join(external_dir, f"STRESS_fold{fold}_train.csv")
@@ -342,7 +300,11 @@ def plot_learning_curves(external_dir, params):
         X_train, y_train = fold_loader(train_path)
         X_test, y_test = fold_loader(test_path)
         
-        model = XGBClassifier(**params)
+        # Copia params para não alterar o original
+        current_params = params.copy()
+        current_params.pop('n_jobs', None) # Remove n_jobs se existir para evitar warnings no fit interno
+        
+        model = XGBClassifier(**current_params)
         
         model.fit(
             X_train, y_train, 
@@ -357,7 +319,7 @@ def plot_learning_curves(external_dir, params):
         ax.plot(x_axis, results['validation_0']['logloss'], label='Treino', color='blue', linewidth=1.5)
         ax.plot(x_axis, results['validation_1']['logloss'], label='Teste (Validação)', color='orange', linewidth=2)
         
-        ax.set_title(f"Fold {fold}", fontsize=12, fontweight='bold')
+        ax.set_title(f"Fold {fold} (XGBoost)", fontsize=12, fontweight='bold')
         ax.set_ylabel('Log Loss')
         ax.set_xlabel('Iterações (Árvores)')
         ax.legend()
@@ -373,30 +335,20 @@ def plot_learning_curves(external_dir, params):
 
     plt.tight_layout()
     plt.show()
+
 plot_learning_curves(EXTERNAL_FOLD_DIR, best_params_xgb)
 
-# %%
-df_summary = pd.read_csv(os.path.join(GRID_SEARCH_DIR, "xgb_grid_summary.csv"))
-
-best_row = df_summary[df_summary['combo_id'] == 40].iloc[0]
-best_params_xgb = {
-    'n_estimators': int(best_row['n_estimators']),
-    'learning_rate': float(best_row['learning_rate']),
-    'max_depth': int(best_row['max_depth']),
-    'subsample': float(best_row['subsample'])
-}
-
-print(best_params_xgb)
-# %%
+# %% [Markdown] 
+# Feature Importance
 def plot_xgb_feature_importance(train_path, best_params, importance_type='gain', top_n=20, figsize=(10, 8)):
- 
     X_train, y_train = fold_loader(train_path)
     
     params = best_params.copy()
+    # Converte tipos
     if 'n_estimators' in params: params['n_estimators'] = int(params['n_estimators'])
     if 'max_depth' in params: params['max_depth'] = int(params['max_depth'])
     
-    # Remove conflicting parameters
+    # Limpeza de params conflitantes
     params.pop('n_jobs', None)
     params.pop('random_state', None)
     params.pop('use_label_encoder', None)
@@ -414,6 +366,10 @@ def plot_xgb_feature_importance(train_path, best_params, importance_type='gain',
     booster = model.get_booster()
     importance_dict = booster.get_score(importance_type=importance_type)
     
+    if not importance_dict:
+        print("Nenhuma importância encontrada. Verifique se o modelo foi treinado corretamente.")
+        return pd.DataFrame()
+
     feat_imp = pd.DataFrame({
         'feature': list(importance_dict.keys()),
         'importance': list(importance_dict.values())
@@ -431,7 +387,7 @@ def plot_xgb_feature_importance(train_path, best_params, importance_type='gain',
         palette='rocket'
     )
     
-    plt.title(f'Features mais importantes  XGBoost ({importance_type})', 
+    plt.title(f'Features mais importantes - XGBoost ({importance_type})', 
               fontsize=14, fontweight='bold')
     plt.xlabel('Importância Normalizada', fontsize=11)
     plt.ylabel('Feature', fontsize=11)
@@ -445,20 +401,7 @@ def plot_xgb_feature_importance(train_path, best_params, importance_type='gain',
     
     return feat_imp[['feature', 'importance', 'importance_normalized']]
 
-#%%
 train_path = os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold1_train.csv")
-
-best_params_xgb = {
-    'n_estimators': 220,    
-    'learning_rate': 0.09,
-    'max_depth': 10,
-    'subsample': 0.9,
-    'n_jobs': -1,
-    'random_state': 42,
-    'use_label_encoder': False,
-    'eval_metric': 'logloss'
-}
-
 feature_importance_xgb = plot_xgb_feature_importance(
     train_path=train_path,
     best_params=best_params_xgb,
@@ -471,4 +414,104 @@ feature_importance_xgb.to_csv(
     os.path.join(GRID_SEARCH_DIR, "xgb_feature_importance.csv"),
     index=False
 )
-# %%
+
+# %% [Markdown] 
+# Avaliação Final (Matriz de Confusão e Curva ROC) com Melhor Modelo
+# Carrega o resultado do grid para garantir que estamos usando o melhor modelo
+df_summary_final = pd.read_csv(os.path.join(GRID_SEARCH_DIR, "xgb_grid_summary.csv"))
+best_row_final = df_summary_final.loc[df_summary_final['f1'].idxmax()]
+
+print(f"--- CONFIGURAÇÃO SELECIONADA PARA AVALIAÇÃO FINAL ---")
+print(f"Combo ID: {int(best_row_final['combo_id'])}")
+print(f"F1 Score: {best_row_final['f1']:.4f}")
+
+xgb_params_final = {
+    'n_estimators': int(best_row_final['n_estimators']),
+    'learning_rate': float(best_row_final['learning_rate']),
+    'max_depth': int(best_row_final['max_depth']),
+    'subsample': float(best_row_final['subsample']),
+    'use_label_encoder': False,
+    'eval_metric': 'logloss',
+    'random_state': 42,
+    'n_jobs': -1
+}
+
+# Loop de avaliação final
+folds = sorted([
+    int(f.replace("STRESS_fold", "").replace("_train.csv", ""))
+    for f in os.listdir(EXTERNAL_FOLD_DIR) 
+    if f.startswith("STRESS_fold") and f.endswith("_train.csv")
+])
+
+all_y_test_xgb = []
+all_y_pred_xgb = []
+all_y_proba_xgb = []
+
+for fold in tqdm(folds, desc="Avaliando XGBoost (Final)"):
+    train_path = os.path.join(EXTERNAL_FOLD_DIR, f"STRESS_fold{fold}_train.csv")
+    test_path = os.path.join(EXTERNAL_FOLD_DIR, f"STRESS_fold{fold}_test.csv")
+    
+    X_train, y_train = fold_loader(train_path)
+    X_test, y_test = fold_loader(test_path)
+    
+    model = XGBClassifier(**xgb_params_final)
+    model.fit(X_train, y_train)
+    
+    y_pred = model.predict(X_test)
+    y_proba = model.predict_proba(X_test)[:, 1]
+    
+    all_y_test_xgb.extend(y_test)
+    all_y_pred_xgb.extend(y_pred)
+    all_y_proba_xgb.extend(y_proba)
+
+# --- GRÁFICO 1: MATRIZ DE CONFUSÃO ---
+fig, ax = plt.subplots(figsize=(6, 5))
+cm_xgb = confusion_matrix(all_y_test_xgb, all_y_pred_xgb)
+
+disp_xgb = ConfusionMatrixDisplay(
+    confusion_matrix=cm_xgb, 
+    display_labels=['Rest (0)', 'Stress (1)']
+)
+
+disp_xgb.plot(ax=ax, cmap='Greens', values_format='d')
+plt.title('Matriz de Confusão - XGBoost', fontsize=14, fontweight='bold')
+plt.grid(False)
+plt.show()
+
+# --- GRÁFICO 2: CURVA ROC ---
+fig, ax = plt.subplots(figsize=(7, 6))
+
+RocCurveDisplay.from_predictions(
+    all_y_test_xgb, 
+    all_y_proba_xgb, 
+    ax=ax, 
+    name="XGBoost",
+    color="darkgreen", 
+    lw=2
+)
+
+ax.plot([0, 1], [0, 1], "k--", lw=2, label="Aleatório (chance)")
+
+ax.set_title("Curva ROC - XGBoost", fontsize=14, fontweight='bold')
+ax.set_xlabel("Taxa de Falsos Positivos", fontsize=12)
+ax.set_ylabel("Taxa de Verdadeiros Positivos", fontsize=12)
+ax.legend(loc="lower right")
+ax.grid(alpha=0.3)
+
+plt.show()
+
+# %% Salvar melhor modelo XGBoost
+MODEL_SAVE_PATH_XGB = os.path.join(BASE_DIR, "best_xgb_model.pkl")
+
+# Treino final com a configuração selecionada (usando o fold de exemplo ou treino completo)
+X_final, y_final = fold_loader(os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold1_train.csv"))
+
+final_model_xgb = XGBClassifier(**xgb_params_final)
+final_model_xgb.fit(X_final, y_final)
+
+# Salvando via pickle
+with open(MODEL_SAVE_PATH_XGB, 'wb') as f:
+    pickle.dump(final_model_xgb, f)
+
+print(f"Modelo XGBoost salvo com sucesso em: {MODEL_SAVE_PATH_XGB}")
+#%%
