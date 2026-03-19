@@ -1,5 +1,4 @@
-# %% [Markdown] 
-# Importações e Configurações Iniciais
+# %% [Markdown]
 import os
 import io
 import matplotlib.pyplot as plt
@@ -8,17 +7,18 @@ import math
 import time
 import pickle
 import itertools
+from pathlib import Path
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-from xgboost import XGBClassifier 
+from xgboost import XGBClassifier
 from sklearn.metrics import (
-    roc_auc_score, f1_score, precision_score, recall_score, 
-    auc, precision_recall_curve, confusion_matrix, 
+    roc_auc_score, f1_score, precision_score, recall_score,
+    auc, precision_recall_curve, confusion_matrix,
     ConfusionMatrixDisplay, RocCurveDisplay
 )
 
-BASE_DIR = r"C:\DEV\mestrado\WSD\experiments"
+BASE_DIR = Path(__file__).resolve().parent.parent
 FOLDS_DIR = os.path.join(BASE_DIR, "folds")
 
 EXTERNAL_FOLD_DIR = os.path.join(FOLDS_DIR, "external_folds")
@@ -29,8 +29,7 @@ os.makedirs(GRID_SEARCH_DIR, exist_ok=True)
 
 TARGET = "label"
 
-# %% [Markdown] 
-# Data Loader
+# %% [Markdown] Carregamento do Fold
 def fold_loader(path_csv):
     df = pd.read_csv(path_csv)
 
@@ -41,8 +40,8 @@ def fold_loader(path_csv):
     y = df[TARGET]
     return X, y
 
-#%% [Markdown] 
-# Definição do Grid de Hiperparâmetros
+#%% [Markdown] Definição do Grid de Hiperparâmetros
+
 param_grid_xgb = {
     'n_estimators': [180, 220, 260, 300, 340],
     'learning_rate': [0.08, 0.09, 0.1, 0.11, 0.12],    
@@ -50,8 +49,8 @@ param_grid_xgb = {
     'subsample': [0.9, 1.0]
 }
 
-# %% [Markdown] 
-# Grid Search XGBoost
+# %% [Markdown] Grid Search XGBoost
+
 def grid_search_xgb(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
         
     param_names = list(param_grid.keys())
@@ -112,7 +111,8 @@ def grid_search_xgb(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
                 prec, rec, _ = precision_recall_curve(y_val, y_proba)
                 auprc_val = auc(rec, prec)
                 roc_val = roc_auc_score(y_val, y_proba)
-            except:
+            except Exception as e:
+                print(f"[WARN] fold {fold}, combo {comb_id}: {e}")
                 auprc_val = 0
                 roc_val = 0
 
@@ -131,7 +131,6 @@ def grid_search_xgb(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
             metrics_folds.append(metrics)
 
         avg_metrics = pd.DataFrame(metrics_folds).mean(numeric_only=True).to_dict()
-        # Remove colunas não numéricas ou de ID do dicionário de média
         for k in ['fold', 'combination_id']: 
             if k in avg_metrics: del avg_metrics[k]
 
@@ -161,8 +160,8 @@ def grid_search_xgb(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
 # Executa o Grid Search
 best_params_xgb = grid_search_xgb(INTERNAL_FOLDS_DIR, param_grid_xgb, metric_sort="f1")
 
-# %% [Markdown] 
-# Avaliação Externa (Quick Check)
+# %% [Markdown] Avaliação XGBOOST
+
 def evaluate_xgb(EXTERNAL_FOLD_DIR, best_params):
     
     folds = sorted([
@@ -211,71 +210,16 @@ def evaluate_xgb(EXTERNAL_FOLD_DIR, best_params):
     df_results = pd.DataFrame(rows_eval)
     output_path = os.path.join(GRID_SEARCH_DIR, "xgb_final_evaluation.csv")
     df_results.to_csv(output_path, index=False)
-    
-    display(df_results.mean(numeric_only=True))
+
+    df_summary = df_results.agg(['mean', 'std'])
+    df_summary.to_csv(os.path.join(GRID_SEARCH_DIR, "xgb_final_evaluation_summary.csv"))
+    display(df_summary)
 
 evaluate_xgb(EXTERNAL_FOLD_DIR, best_params_xgb)
 
-# %% [Markdown] 
-# Análise de Pareto
-df = pd.read_csv(os.path.join(GRID_SEARCH_DIR, "xgb_grid_summary.csv"))
 
-def pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size']):
-    df = df.copy()
-    df['_dominated'] = False
-    for i in range(len(df)):
-        for j in range(len(df)):
-            if i == j: continue
-            better_metric = df.loc[j, maximize] >= df.loc[i, maximize]
-            better_costs = all(df.loc[j, c] <= df.loc[i, c] for c in minimize)
-            strictly_better = (df.loc[j, maximize] > df.loc[i, maximize]) or \
-                             any(df.loc[j, c] < df.loc[i, c] for c in minimize)
-            if better_metric and better_costs and strictly_better:
-                df.loc[i, '_dominated'] = True
-                break
-    return df[~df['_dominated']].drop(columns=['_dominated'])
+# %% [Markdown] Curvas de Aprendizado
 
-pareto = pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size'])
-
-# Visualização Pareto
-plt.figure(figsize=(12, 5))
-
-# F1 vs Tempo
-plt.subplot(1, 2, 1)
-plt.scatter(df['runtime_train'], df['f1'], c='gray', alpha=0.4, s=30, label='Todas combinações')
-plt.scatter(pareto['runtime_train'], pareto['f1'], c='red', s=80, 
-            edgecolors='black', linewidth=1.5, label='Fronteira de Pareto')
-plt.xlabel('Tempo de Treino (s)')
-plt.ylabel('F1 Score')
-plt.title('XGBoost: F1 vs Tempo de Treino')
-plt.legend()
-plt.grid(alpha=0.3)
-
-# F1 vs Tamanho
-plt.subplot(1, 2, 2)
-plt.scatter(df['model_size']/1e6, df['f1'], c='gray', alpha=0.4, s=30, label='Todas combinações')
-plt.scatter(pareto['model_size']/1e6, pareto['f1'], c='red', s=80,
-            edgecolors='black', linewidth=1.5, label='Fronteira de Pareto')
-plt.xlabel('Tamanho do Modelo (MB)')
-plt.ylabel('F1 Score')
-plt.title('XGBoost: F1 vs Tamanho do Modelo')
-plt.legend()
-plt.grid(alpha=0.3)
-
-plt.tight_layout()
-plt.show()
-
-# Tabela Pareto
-pareto_sorted = pareto.sort_values('f1', ascending=False)[[
-    'combo_id', 'n_estimators', 'learning_rate', 'max_depth', 'subsample',
-    'f1', 'runtime_train', 'runtime_inf', 'model_size'
-]].copy()
-pareto_sorted['model_size_mb'] = (pareto_sorted['model_size'] / 1e6).round(2)
-pareto_sorted = pareto_sorted.drop(columns=['model_size'])
-display(pareto_sorted.reset_index(drop=True))
-
-# %% [Markdown] 
-# Curvas de Aprendizado (Learning Curves)
 def plot_learning_curves(external_dir, params):
     
     folds = sorted([
@@ -300,9 +244,8 @@ def plot_learning_curves(external_dir, params):
         X_train, y_train = fold_loader(train_path)
         X_test, y_test = fold_loader(test_path)
         
-        # Copia params para não alterar o original
         current_params = params.copy()
-        current_params.pop('n_jobs', None) # Remove n_jobs se existir para evitar warnings no fit interno
+        current_params.pop('n_jobs', None) 
         
         model = XGBClassifier(**current_params)
         
@@ -338,47 +281,52 @@ def plot_learning_curves(external_dir, params):
 
 plot_learning_curves(EXTERNAL_FOLD_DIR, best_params_xgb)
 
-# %% [Markdown] 
-# Feature Importance
-def plot_xgb_feature_importance(train_path, best_params, importance_type='gain', top_n=20, figsize=(10, 8)):
-    X_train, y_train = fold_loader(train_path)
-    
+# %% [Markdown] Importancia das features
+def plot_xgb_feature_importance(fold_dir, best_params, importance_type='gain', top_n=20, figsize=(10, 8)):
     params = best_params.copy()
-    # Converte tipos
     if 'n_estimators' in params: params['n_estimators'] = int(params['n_estimators'])
     if 'max_depth' in params: params['max_depth'] = int(params['max_depth'])
-    
-    # Limpeza de params conflitantes
     params.pop('n_jobs', None)
     params.pop('random_state', None)
     params.pop('use_label_encoder', None)
     params.pop('eval_metric', None)
-    
-    model = XGBClassifier(
-        n_jobs=-1,
-        random_state=42,
-        use_label_encoder=False,
-        eval_metric='logloss',
-        **params
-    )
-    model.fit(X_train, y_train)
-    
-    booster = model.get_booster()
-    importance_dict = booster.get_score(importance_type=importance_type)
-    
-    if not importance_dict:
+
+    fold_ids = sorted([
+        int(f.replace("STRESS_fold", "").replace("_train.csv", ""))
+        for f in os.listdir(fold_dir)
+        if f.startswith("STRESS_fold") and f.endswith("_train.csv")
+    ])
+
+    fold_importances = []
+    all_features = set()
+
+    for fold_id in fold_ids:
+        X_train, y_train = fold_loader(os.path.join(fold_dir, f"STRESS_fold{fold_id}_train.csv"))
+        model = XGBClassifier(
+            n_jobs=-1, random_state=42, use_label_encoder=False, eval_metric='logloss', **params
+        )
+        model.fit(X_train, y_train)
+        imp = model.get_booster().get_score(importance_type=importance_type)
+        all_features.update(imp.keys())
+        fold_importances.append(imp)
+
+    if not all_features:
         print("Nenhuma importância encontrada. Verifique se o modelo foi treinado corretamente.")
         return pd.DataFrame()
 
-    feat_imp = pd.DataFrame({
-        'feature': list(importance_dict.keys()),
-        'importance': list(importance_dict.values())
-    }).sort_values('importance', ascending=False)
-    
-    feat_imp['importance_normalized'] = feat_imp['importance'] / feat_imp['importance'].sum()
-    
+    feat_imp = pd.DataFrame([
+        {
+            'feature': feat,
+            'importance_mean': np.mean([fi.get(feat, 0) for fi in fold_importances]),
+            'importance_std': np.std([fi.get(feat, 0) for fi in fold_importances])
+        }
+        for feat in all_features
+    ]).sort_values('importance_mean', ascending=False)
+
+    feat_imp['importance_normalized'] = feat_imp['importance_mean'] / feat_imp['importance_mean'].sum()
+
     top_features = feat_imp.head(top_n)
-    
+
     plt.figure(figsize=figsize)
     sns.barplot(
         data=top_features,
@@ -386,26 +334,25 @@ def plot_xgb_feature_importance(train_path, best_params, importance_type='gain',
         y='feature',
         palette='rocket'
     )
-    
-    plt.title(f'Features mais importantes - XGBoost ({importance_type})', 
+
+    plt.title(f'Features mais importantes - XGBoost ({importance_type})\n(Média ± std de todos os folds)',
               fontsize=14, fontweight='bold')
     plt.xlabel('Importância Normalizada', fontsize=11)
     plt.ylabel('Feature', fontsize=11)
     plt.grid(axis='x', alpha=0.3)
-    
-    for i, v in enumerate(top_features['importance_normalized']):
+
+    for i, (v, s) in enumerate(zip(top_features['importance_normalized'], top_features['importance_std'])):
         plt.text(v + 0.005, i, f'{v:.1%}', va='center', fontsize=9)
-    
+
     plt.tight_layout()
     plt.show()
-    
-    return feat_imp[['feature', 'importance', 'importance_normalized']]
 
-train_path = os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold1_train.csv")
+    return feat_imp[['feature', 'importance_mean', 'importance_std', 'importance_normalized']]
+
 feature_importance_xgb = plot_xgb_feature_importance(
-    train_path=train_path,
+    fold_dir=EXTERNAL_FOLD_DIR,
     best_params=best_params_xgb,
-    importance_type='gain', 
+    importance_type='gain',
     top_n=20,
     figsize=(10, 8)
 )
@@ -415,13 +362,10 @@ feature_importance_xgb.to_csv(
     index=False
 )
 
-# %% [Markdown] 
-# Avaliação Final (Matriz de Confusão e Curva ROC) com Melhor Modelo
-# Carrega o resultado do grid para garantir que estamos usando o melhor modelo
+# %% [Markdown] Matriz de Confusão e Curva ROC
 df_summary_final = pd.read_csv(os.path.join(GRID_SEARCH_DIR, "xgb_grid_summary.csv"))
 best_row_final = df_summary_final.loc[df_summary_final['f1'].idxmax()]
 
-print(f"--- CONFIGURAÇÃO SELECIONADA PARA AVALIAÇÃO FINAL ---")
 print(f"Combo ID: {int(best_row_final['combo_id'])}")
 print(f"F1 Score: {best_row_final['f1']:.4f}")
 
@@ -436,7 +380,6 @@ xgb_params_final = {
     'n_jobs': -1
 }
 
-# Loop de avaliação final
 folds = sorted([
     int(f.replace("STRESS_fold", "").replace("_train.csv", ""))
     for f in os.listdir(EXTERNAL_FOLD_DIR) 
@@ -464,7 +407,7 @@ for fold in tqdm(folds, desc="Avaliando XGBoost (Final)"):
     all_y_pred_xgb.extend(y_pred)
     all_y_proba_xgb.extend(y_proba)
 
-# --- GRÁFICO 1: MATRIZ DE CONFUSÃO ---
+# MATRIZ DE CONFUSÃO
 fig, ax = plt.subplots(figsize=(6, 5))
 cm_xgb = confusion_matrix(all_y_test_xgb, all_y_pred_xgb)
 
@@ -478,7 +421,7 @@ plt.title('Matriz de Confusão - XGBoost', fontsize=14, fontweight='bold')
 plt.grid(False)
 plt.show()
 
-# --- GRÁFICO 2: CURVA ROC ---
+# CURVA ROC
 fig, ax = plt.subplots(figsize=(7, 6))
 
 RocCurveDisplay.from_predictions(
@@ -503,15 +446,18 @@ plt.show()
 # %% Salvar melhor modelo XGBoost
 MODEL_SAVE_PATH_XGB = os.path.join(BASE_DIR, "best_xgb_model.pkl")
 
-# Treino final com a configuração selecionada (usando o fold de exemplo ou treino completo)
-X_final, y_final = fold_loader(os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold1_train.csv"))
+# Train final model on all external fold training sets combined
+all_X_final, all_y_final = [], []
+for fold_id in folds:
+    X_fold, y_fold = fold_loader(os.path.join(EXTERNAL_FOLD_DIR, f"STRESS_fold{fold_id}_train.csv"))
+    all_X_final.append(X_fold)
+    all_y_final.append(y_fold)
+X_final = pd.concat(all_X_final, ignore_index=True)
+y_final = pd.concat(all_y_final, ignore_index=True)
 
 final_model_xgb = XGBClassifier(**xgb_params_final)
 final_model_xgb.fit(X_final, y_final)
 
-# Salvando via pickle
 with open(MODEL_SAVE_PATH_XGB, 'wb') as f:
     pickle.dump(final_model_xgb, f)
-
-print(f"Modelo XGBoost salvo com sucesso em: {MODEL_SAVE_PATH_XGB}")
-#%%
+#%% Fim

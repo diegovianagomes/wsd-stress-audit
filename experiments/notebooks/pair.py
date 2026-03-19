@@ -1,125 +1,320 @@
 #%%
 
 import os
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 
-BASE_DIR = r"C:\DEV\mestrado\WSD\experiments"
-RF_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search", "Evaluation_results.csv")
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+RF_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search_rf", "Evaluation_results.csv")
 XGB_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search_xgb", "xgb_final_evaluation.csv")
 
-def load_clean(path):
-    df = pd.read_csv(path)
-    df.columns = df.columns.str.strip().str.lower()
-    return df
+#%%
+df_rf  = pd.read_csv(RF_RESULTS)
+df_xgb = pd.read_csv(XGB_RESULTS)
 
-df_rf = load_clean(RF_RESULTS)
-df_xgb = load_clean(XGB_RESULTS)
 
-if df_rf.empty or df_xgb.empty:
-    print("Pare a execução e verifique os caminhos.")
-else:
-    col_metric = 'f1' if 'f1' in df_rf.columns else ('f1-score' if 'f1-score' in df_rf.columns else 'roc_auc')
-    
-    df_comp = pd.merge(
-        df_rf[['fold', col_metric]], 
-        df_xgb[['fold', col_metric]], 
-        on='fold', 
+# %%
+df_rf.columns = [c.lower().strip() for c in df_rf.columns]
+df_xgb.columns = [c.lower().strip() for c in df_xgb.columns]
+#%%
+df_rf.columns
+
+# %%
+required_cols = ['fold', 'f1', 'roc_auc', 'precision', 'recall']
+
+for df, name in [(df_rf, 'RF'), (df_xgb, 'XGB')]:
+    print(f'Colunas: {df.columns.tolist()}')
+
+df_compare = (
+    df_rf[required_cols]
+    .merge(
+        df_xgb[required_cols],
+        on='fold',
         suffixes=('_rf', '_xgb')
     )
+)
+display(df_compare.head(10))
 
-    metric = col_metric
-    df_comp['diff'] = df_comp[f'{metric}_xgb'] - df_comp[f'{metric}_rf']
+# %%
 
-    print(f"Estatística Descritiva ({metric.upper()})")
-    summary = df_comp[[f'{metric}_rf', f'{metric}_xgb']].agg(['mean', 'std', 'median'])
-    print(summary)
+metricas = pd.DataFrame({
+    'Modelo': ['Random Forest', 'XGBoost'],
+})
 
-    mean_rf = summary.loc['mean', f'{metric}_rf']
-    mean_xgb = summary.loc['mean', f'{metric}_xgb']
-    ganho = ((mean_xgb - mean_rf) / mean_rf) * 100
-    print(f"\nGanho Médio do XGBoost sobre RF: {ganho:.2f}%")
+stats_metricas = {
+    'roc_auc': 'ROC AUC',
+    'f1': 'F1',
+    'precision': 'Precision',
+    'recall': 'Recall',
+}
 
-    _, p_norm = stats.shapiro(df_comp['diff'])
+for metric, label in stats_metricas.items():
+    metricas[f'Média {label}'] = [
+        df_compare[f'{metric}_rf'].mean(),
+        df_compare[f'{metric}_xgb'].mean(),
+    ]
+    metricas[f'Desvio Padrão {label}'] = [
+        df_compare[f'{metric}_rf'].std(),
+        df_compare[f'{metric}_xgb'].std(),
+    ]
+    metricas[f'Min {label}'] = [
+        df_compare[f'{metric}_rf'].min(),
+        df_compare[f'{metric}_xgb'].min(),
+    ]
+    metricas[f'Max {label}'] = [
+        df_compare[f'{metric}_rf'].max(),
+        df_compare[f'{metric}_xgb'].max(),
+    ]
+metricas
 
-    if p_norm > 0.05:
-        stat, p_val = stats.ttest_rel(df_comp[f'{metric}_xgb'], df_comp[f'{metric}_rf'])
-        test_name = "Paired T-Test "
+# %% [markdown]
+# Diferencia entre os modelos (XGBoost - Random Forest)
+
+diff_stats = []
+for metric, label in stats_metricas.items():
+    df_compare[f'diff_{metric}'] = df_compare[f'{metric}_xgb'] - df_compare[f'{metric}_rf']
+    diff_stats.append({
+        'Métrica': label,
+        'Diff media (XGB - RF)': df_compare[f'diff_{metric}'].mean(),
+        'Desvio Padrão': df_compare[f'diff_{metric}'].std(),
+    })
+
+df_diff_stats = pd.DataFrame(diff_stats)
+df_diff_stats
+
+# %% [markdown]
+# Teste de Hipótese para cada métrica
+
+ttest_results = []
+for metric, label in stats_metricas.items():
+    diff = df_compare[f'{metric}_rf'] - df_compare[f'{metric}_xgb']
+    _, p_shapiro = stats.shapiro(diff)
+    normal = p_shapiro >= 0.05
+
+    if normal:
+        t_stat, p_value = stats.ttest_rel(
+            df_compare[f'{metric}_rf'],
+            df_compare[f'{metric}_xgb']
+        )
+        test_used = 'paired t-test'
     else:
-        stat, p_val = stats.wilcoxon(df_comp[f'{metric}_xgb'], df_comp[f'{metric}_rf'])
-        test_name = "Wilcoxon Signed-Rank Test (Não-Paramétrico)"
-
-    print(f"\nTeste Aplicado: {test_name}")
-    print(f"P-Value: {p_val:.4f}")
-
-    # BOXPLOT
-    plt.figure(figsize=(10, 6))
-
-    df_melt = df_comp.melt(id_vars='fold', 
-                           value_vars=[f'{metric}_rf', f'{metric}_xgb'], 
-                           var_name='Modelo', 
-                           value_name=metric.upper()
-    )
-    df_melt['Modelo'] = df_melt['Modelo'].replace({f'{metric}_rf': 'Random Forest', f'{metric}_xgb': 'XGBoost'})
-    
-    order = ['Random Forest', 'XGBoost']
-    
-    sns.boxplot(x='Modelo', 
-                y=metric.upper(), 
-                data=df_melt, 
-                palette=['#9b59b6', '#2ecc71'], 
-                width=0.4, 
-                order=order
-    )
-    
-    # Pontos individuais
-    sns.stripplot(
-        x='Modelo', 
-        y=metric.upper(), 
-        data=df_melt, 
-        color='black', 
-        alpha=0.5, 
-        size=8, 
-        order=order
+        t_stat, p_value = stats.wilcoxon(
+            df_compare[f'{metric}_rf'],
+            df_compare[f'{metric}_xgb'],
+            zero_method='wilcox'
         )
-    # Linhas
-    for i in df_comp['fold']:
-        y_rf = df_comp.loc[df_comp['fold'] == i, f'{metric}_rf'].values[0]
-        y_xgb = df_comp.loc[df_comp['fold'] == i, f'{metric}_xgb'].values[0]
-        
-        plt.plot(
-            [0, 1], 
-            [y_rf, y_xgb], 
-            color='gray', 
-            linestyle='--', 
-            alpha=0.4, 
-            linewidth=1
-        )
+        test_used = 'Wilcoxon'
 
-    plt.title(f'Comparação RF vs XGBoost ({metric.upper()})\n{test_name} (p={p_val:.4f})', 
-              fontsize=14, fontweight='bold')
-    plt.grid(axis='y', alpha=0.3)
-    plt.tight_layout()
-    plt.show()
+    ttest_results.append({
+        'Métrica': label,
+        'Shapiro p-value': round(p_shapiro, 4),
+        'Normalidade': 'Sim' if normal else 'Não',
+        'Teste Usado': test_used,
+        't_stat (RF - XGB)': t_stat,
+        'p-value': p_value,
+        'Significativo (p < 0.05)': 'Sim' if p_value < 0.05 else 'Não'
+    })
 
-    # DIFERENÇAS POOR FOLD
-    plt.figure(figsize=(10, 5))
-    cores = ['#2ecc71' if x >= 0 else '#e74c3c' for x in df_comp['diff']]
+df_ttest = pd.DataFrame(ttest_results)
+df_ttest
 
-    ax = sns.barplot(x='fold', y='diff', data=df_comp, palette=cores)
-    plt.axhline(0, color='black', linewidth=1)
+# %% [markdown]
+# Teste Não-Paramétrico Wilcoxon Signed-Rank
 
-    plt.title(f'Diferença de {metric.upper()} por Fold (XGBoost - Random Forest)', fontsize=14, fontweight='bold')
-    plt.ylabel('Diferença (Delta)')
-    plt.xlabel('Fold Externo')
-    plt.grid(axis='y', alpha=0.3)
+metrics = [
+    ('ROC AUC', 'roc_auc_rf', 'roc_auc_xgb'),
+    ('F1 Score', 'f1_rf', 'f1_xgb'),
+    ('Precision', 'precision_rf', 'precision_xgb'),
+    ('Recall', 'recall_rf', 'recall_xgb')
+]
 
-    for container in ax.containers:
-        ax.bar_label(container, fmt='%.3f', padding=3)
+wilcoxon_results = []
+for name, col_rf, col_xgb in metrics:
+    stat, p_val = stats.wilcoxon(df_compare[col_rf], df_compare[col_xgb], zero_method='wilcox')
+    wilcoxon_results.append({
+        'Métrica': name,
+        'w_stat': stat,
+        'p-value': p_val,
+        'Significativo (p < 0.05)': 'Sim' if p_val < 0.05 else 'Não'
+    })
 
-    plt.tight_layout()
-    plt.show()
+df_wilcoxon = pd.DataFrame(wilcoxon_results)
+df_wilcoxon
+
+
+# %% [markdown]
+# Resultados
+
+plt.style.use('seaborn-v0_8-whitegrid')
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+axes = axes.flatten()
+
+colors = ['#1f77b4', '#ff7f0e']
+
+#
+for idx, (metric, label) in enumerate(stats_metricas.items()):
+    data_to_plot = [df_compare[f'{metric}_rf'], df_compare[f'{metric}_xgb']]
+    bp = axes[idx].boxplot(data_to_plot, labels=['Random Forest', 'XGBoost'], 
+                            patch_artist=True, widths=0.6)
+    
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+    
+    axes[idx].set_title(f'Distribuição de {label}', 
+                        fontsize=12, 
+                        fontweight='bold'
+    )
+    axes[idx].set_ylabel(label, fontsize=10)
+    axes[idx].grid(axis='y', linestyle='--', alpha=0.7)
+    means = [df_compare[f'{metric}_rf'].mean(), df_compare[f'{metric}_xgb'].mean()]
+    axes[idx].plot([1, 2], means, 'o', color='red', markersize=8, label='Média')
+    axes[idx].legend()
+
+plt.tight_layout()
+plt.show()
+# %%
+# Performance em cada Fold para todas as métricas
+fig2, axes2 = plt.subplots(2, 2, figsize=(14, 10))
+axes2 = axes2.flatten()
+
+colors_rf_xgb = ['#1f77b4', '#ff7f0e']
+
+for idx, (metric, label) in enumerate(stats_metricas.items()):
+    axes2[idx].plot(df_compare['fold'], df_compare[f'{metric}_rf'], 
+                    marker='o', label='Random Forest', color=colors_rf_xgb[0], linewidth=2)
+    axes2[idx].plot(df_compare['fold'], df_compare[f'{metric}_xgb'], 
+                    marker='s', label='XGBoost', color=colors_rf_xgb[1], linewidth=2)
+    axes2[idx].set_title(f'{label} em cada Fold', fontsize=12, fontweight='bold')
+    axes2[idx].set_xlabel('Fold', fontsize=10)
+    axes2[idx].set_ylabel(label, fontsize=10)
+    axes2[idx].set_xticks(df_compare['fold'])
+    axes2[idx].legend()
+    axes2[idx].grid(axis='both', linestyle='--', alpha=0.7)
+
+plt.tight_layout()
+plt.show()
+
+#%%
+# Bland-Altman Plot
+fig3, axes3 = plt.subplots(2, 2, figsize=(14, 10))
+axes3 = axes3.flatten()
+
+for idx, (metric, label) in enumerate(stats_metricas.items()):
+    mean_of_both = (df_compare[f'{metric}_rf'] + df_compare[f'{metric}_xgb']) / 2
+    diff = df_compare[f'{metric}_xgb'] - df_compare[f'{metric}_rf']
+    mean_diff = diff.mean()
+    std_diff = diff.std()
+    
+    axes3[idx].scatter(mean_of_both, diff, color='purple', alpha=0.7)
+    for x, y, fold in zip(mean_of_both, diff, df_compare['fold']):
+        axes3[idx].annotate(str(int(fold)), (x, y), textcoords='offset points',
+                            xytext=(5, 4), fontsize=8, color='purple')
+    axes3[idx].axhline(mean_diff, color='green', linestyle='--',
+                       label=f'Viés: {mean_diff:.4f}')
+    axes3[idx].axhline(mean_diff + 1.96*std_diff, color='red', linestyle=':', 
+                       alpha=0.5, label='Limite de Conformidade (+)')
+    axes3[idx].axhline(mean_diff - 1.96*std_diff, color='red', linestyle=':', 
+                       alpha=0.5, label='Limite de Conformidade (-)')
+    axes3[idx].set_title(f'Bland-Altman Plot: {label}\n(XGB - RF)', 
+                         fontsize=12, fontweight='bold')
+    axes3[idx].set_xlabel(f'Média da Performance ({label})', fontsize=10)
+    axes3[idx].set_ylabel(f'Diferença (XGB - RF)', fontsize=10)
+    axes3[idx].legend(loc='best', fontsize=8)
+    axes3[idx].grid(True, linestyle='--', alpha=0.7)
+
+plt.tight_layout()
+plt.show()
+# %%
+
+# %% [markdown]
+# ### 5. Análise de Concordância de Importância de Features (Model Agreement)
+# Verifica se o Random Forest e o XGBoost concordam sobre quais variáveis são importantes.
+BASE_DIR = Path(__file__).resolve().parent.parent
+RF_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search_rf")
+XGB_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search_xgb")
+
+RF_FI_PATH = os.path.join(RF_RESULTS , "rf_feature_importance.csv")
+XGB_FI_PATH = os.path.join(XGB_RESULTS, "xgb_feature_importance.csv") 
+
+df_fi_rf = pd.read_csv(RF_FI_PATH)
+df_fi_xgb = pd.read_csv(XGB_FI_PATH)
+
+df_fi_rf.columns = [c.lower().strip() for c in df_fi_rf.columns]
+df_fi_xgb.columns = [c.lower().strip() for c in df_fi_xgb.columns]
+
+df_compare_fi = pd.merge(df_fi_rf, df_fi_xgb, on='feature', suffixes=('_rf', '_xgb'))
+
+print(f"Features analisadas: {len(df_compare_fi)}")
+display(df_compare_fi.sort_values(by='importance_mean_rf', ascending=False).head(50))
+
+# T-TEST
+print("\n" + "="*60)
+print("TESTE T: As importâncias MÉDIAS são diferentes?")
+print("="*60)
+
+# H0: A importância média dada pelo RF é igual à do XGB
+t_stat_fi, p_val_fi = stats.ttest_rel(df_compare_fi['importance_mean_rf'], df_compare_fi['importance_mean_xgb'])
+
+print(f"T-statistic: {t_stat_fi:.4f}")
+print(f"P-value:     {p_val_fi:.4e}")
+
+if p_val_fi < 0.05:
+    print("Conclusão: Os modelos atribuem IMPORTÂNCIAS MÉDIAS diferentes.")
+else:
+    print("Conclusão: Não há diferença estatística na importância média.")
+
+
+# SPEARMAN CORRELATION
+print("\n" + "="*60)
+print("CORRELAÇÃO DE SPEARMAN: Os Rankings são parecidos?")
+print("="*60)
+
+# H0: Não há correlação entre os rankings
+corr, p_spearman = stats.spearmanr(df_compare_fi['importance_mean_rf'], df_compare_fi['importance_mean_xgb'])
+
+print(f"Coeficiente de Spearman: {corr:.4f} (-1 a +1)")
+print(f"P-value:                {p_spearman:.4e}")
+
+if p_spearman < 0.05:
+    if corr > 0.7:
+        print("Conclusão: ALTA CONCORDÂNCIA. Os modelos priorizam as mesmas features (mesmo que os valores brutos difiram).")
+    elif 0.4 < corr <= 0.7:
+        print("Conclusão: CONCORDÂNCIA MODERADA. Há um padrão comum, mas com divergências.")
+    else:
+        print("Conclusão: BAIXA CONCORDÂNCIA. Os modelos 'enxergam' o problema de formas muito distintas.")
+else:
+    print("Conclusão: Não há correlação significativa nos rankings.")
+
+
+#%%
+plt.figure(figsize=(10, 6))
+plt.scatter(df_compare_fi['importance_mean_rf'], df_compare_fi['importance_mean_xgb'], alpha=0.6, edgecolors='w', s=80)
+
+# Adicionar linha de identidade (onde x=y)
+lims = [
+    np.min([plt.xlim(), plt.ylim()]),  # min of both axes
+    np.max([plt.xlim(), plt.ylim()]),  # max of both axes
+]
+plt.plot(lims, lims, 'r--', alpha=0.75, zorder=0, label='Linha de Igualdade Perfeita')
+
+# Anotar as top 3 features para ver onde elas caem
+top_features = df_compare_fi.nlargest(3, 'importance_mean_rf')['feature']
+for feature in top_features:
+    row = df_compare_fi[df_compare_fi['feature'] == feature].iloc[0]
+    plt.annotate(row['feature'],
+                 (row['importance_mean_rf'], row['importance_mean_xgb']),
+                 xytext=(5, 5), textcoords='offset points', fontsize=9, color='black')
+
+plt.xlabel('Importância Média Random Forest', fontsize=12)
+plt.ylabel('Importância Média XGBoost', fontsize=12)
+plt.title('Concordância de Feature Importance\n(Spearman r={:.2f})'.format(corr), fontsize=14, fontweight='bold')
+plt.legend()
+plt.grid(True, linestyle='--', alpha=0.5)
+plt.show()
+
 # %%
