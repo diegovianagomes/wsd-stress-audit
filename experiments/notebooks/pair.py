@@ -220,10 +220,10 @@ for idx, (metric, label) in enumerate(stats_metricas.items()):
                        alpha=0.5, label='Limite de Conformidade (+)')
     axes3[idx].axhline(mean_diff - 1.96*std_diff, color='red', linestyle=':', 
                        alpha=0.5, label='Limite de Conformidade (-)')
-    axes3[idx].set_title(f'Bland-Altman Plot: {label}\n(XGB - RF)', 
+    axes3[idx].set_title(f'{label}\n', 
                          fontsize=12, fontweight='bold')
     axes3[idx].set_xlabel(f'Média da Performance ({label})', fontsize=10)
-    axes3[idx].set_ylabel(f'Diferença (XGB - RF)', fontsize=10)
+    axes3[idx].set_ylabel(f'Diff (XGB - RF)', fontsize=10)
     axes3[idx].legend(loc='best', fontsize=8)
     axes3[idx].grid(True, linestyle='--', alpha=0.7)
 
@@ -232,8 +232,7 @@ plt.show()
 # %%
 
 # %% [markdown]
-# ### 5. Análise de Concordância de Importância de Features (Model Agreement)
-# Verifica se o Random Forest e o XGBoost concordam sobre quais variáveis são importantes.
+# Concordância de Importância de Features
 BASE_DIR = Path(__file__).resolve().parent.parent
 RF_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search_rf")
 XGB_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search_xgb")
@@ -253,9 +252,6 @@ print(f"Features analisadas: {len(df_compare_fi)}")
 display(df_compare_fi.sort_values(by='importance_mean_rf', ascending=False).head(50))
 
 # T-TEST
-print("\n" + "="*60)
-print("TESTE T: As importâncias MÉDIAS são diferentes?")
-print("="*60)
 
 # H0: A importância média dada pelo RF é igual à do XGB
 t_stat_fi, p_val_fi = stats.ttest_rel(df_compare_fi['importance_mean_rf'], df_compare_fi['importance_mean_xgb'])
@@ -264,15 +260,11 @@ print(f"T-statistic: {t_stat_fi:.4f}")
 print(f"P-value:     {p_val_fi:.4e}")
 
 if p_val_fi < 0.05:
-    print("Conclusão: Os modelos atribuem IMPORTÂNCIAS MÉDIAS diferentes.")
+    print("Importâncias divergentes.")
 else:
-    print("Conclusão: Não há diferença estatística na importância média.")
-
+    print("Importâncias equivalentes.")
 
 # SPEARMAN CORRELATION
-print("\n" + "="*60)
-print("CORRELAÇÃO DE SPEARMAN: Os Rankings são parecidos?")
-print("="*60)
 
 # H0: Não há correlação entre os rankings
 corr, p_spearman = stats.spearmanr(df_compare_fi['importance_mean_rf'], df_compare_fi['importance_mean_xgb'])
@@ -282,39 +274,38 @@ print(f"P-value:                {p_spearman:.4e}")
 
 if p_spearman < 0.05:
     if corr > 0.7:
-        print("Conclusão: ALTA CONCORDÂNCIA. Os modelos priorizam as mesmas features (mesmo que os valores brutos difiram).")
+        print("Alta comcordancia.")
     elif 0.4 < corr <= 0.7:
-        print("Conclusão: CONCORDÂNCIA MODERADA. Há um padrão comum, mas com divergências.")
+        print("Moderada comcordancia.")
     else:
-        print("Conclusão: BAIXA CONCORDÂNCIA. Os modelos 'enxergam' o problema de formas muito distintas.")
+        print("Rankings divergentes.")
 else:
-    print("Conclusão: Não há correlação significativa nos rankings.")
-
+    print("Correlação não significativa.")
 
 #%%
+df_compare_fi['rank_rf'] = df_compare_fi['importance_mean_rf'].rank(ascending=False)
+df_compare_fi['rank_xgb'] = df_compare_fi['importance_mean_xgb'].rank(ascending=False)
+
 plt.figure(figsize=(10, 6))
-plt.scatter(df_compare_fi['importance_mean_rf'], df_compare_fi['importance_mean_xgb'], alpha=0.6, edgecolors='w', s=80)
+plt.scatter(df_compare_fi['rank_rf'], df_compare_fi['rank_xgb'], alpha=0.6, edgecolors='w', s=80)
 
-# Adicionar linha de identidade (onde x=y)
-lims = [
-    np.min([plt.xlim(), plt.ylim()]),  # min of both axes
-    np.max([plt.xlim(), plt.ylim()]),  # max of both axes
-]
-plt.plot(lims, lims, 'r--', alpha=0.75, zorder=0, label='Linha de Igualdade Perfeita')
+lims = [1, len(df_compare_fi)]
+plt.plot(lims, lims, 'r--', alpha=0.75, zorder=0, label='Concordância Perfeita')
 
-# Anotar as top 3 features para ver onde elas caem
-top_features = df_compare_fi.nlargest(3, 'importance_mean_rf')['feature']
+top_features = df_compare_fi.nsmallest(48, 'rank_rf')['feature']
 for feature in top_features:
     row = df_compare_fi[df_compare_fi['feature'] == feature].iloc[0]
     plt.annotate(row['feature'],
-                 (row['importance_mean_rf'], row['importance_mean_xgb']),
+                 (row['rank_rf'], row['rank_xgb']),
                  xytext=(5, 5), textcoords='offset points', fontsize=9, color='black')
 
-plt.xlabel('Importância Média Random Forest', fontsize=12)
-plt.ylabel('Importância Média XGBoost', fontsize=12)
-plt.title('Concordância de Feature Importance\n(Spearman r={:.2f})'.format(corr), fontsize=14, fontweight='bold')
+plt.xlabel('Rank RF (1 = mais importante)', fontsize=12)
+plt.ylabel('Rank XGBoost (1 = mais importante)', fontsize=12)
+plt.title('Concordância de Feature Importance por Ranking\n(Spearman r={:.2f})'.format(corr), fontsize=14, fontweight='bold')
 plt.legend()
 plt.grid(True, linestyle='--', alpha=0.5)
+plt.gca()
+plt.gca()
 plt.show()
 
 # %%
