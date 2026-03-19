@@ -1,9 +1,10 @@
-# %% 
+# %%
 import os
 import io
 import time
 import pickle
 import itertools
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import math
@@ -12,32 +13,36 @@ import seaborn as sns
 from tqdm import tqdm
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
-    roc_auc_score, 
-    f1_score, 
-    precision_score, 
-    recall_score, 
-    auc, precision_recall_curve, 
-    log_loss, 
-    confusion_matrix, 
-    ConfusionMatrixDisplay, 
+    roc_auc_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    auc, precision_recall_curve,
+    log_loss,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
     RocCurveDisplay
 )
 
 
-BASE_DIR = r"C:\DEV\mestrado\WSD\experiments"
+BASE_DIR = Path(__file__).resolve().parent.parent
 FOLDS_DIR = os.path.join(BASE_DIR, "folds")
 
 EXTERNAL_FOLD_DIR = os.path.join(FOLDS_DIR, "external_folds")
 INTERNAL_FOLDS_DIR = os.path.join(FOLDS_DIR, "internal_folds")
-GRID_SEARCH_DIR = os.path.join(FOLDS_DIR, "grid_search")
+GRID_SEARCH_DIR = os.path.join(FOLDS_DIR, "grid_search_rf")
 
 os.makedirs(GRID_SEARCH_DIR, exist_ok=True)
 
 TARGET = "label"
 base_seed = 42
 
+LEARNING_CURVE_STEP = 5
+FEATURE_IMPORTANCE_TOP_N = 20
+FEATURE_LABEL_OFFSET = 0.001
 
-# %% Data Loader
+
+# %% [Markdown] Carregamento do Fold
 def fold_loader(path_csv):
     df = pd.read_csv(path_csv)
 
@@ -54,18 +59,14 @@ def fold_loader(path_csv):
     y = df[TARGET]
     return X, y
 
-#%%[Markdown]
-# PARAMETROS INICIAIS
-
+# %%[Markdown] Definição do Grid de Hiperparâmetros
 param_grid = {
     'n_estimators': [150, 200, 250],
     'max_features': [0.6, 0.7, 0.8],
     'min_samples_leaf': [1, 2, 3]
 }
 
-# %%[Markdown]
-# GRID SEARCH COM OS FOLDS INTERNOS
-
+# %%[Markdown] Grid Search RF
 def grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
     
     param_names = list(param_grid.keys())
@@ -162,82 +163,9 @@ def grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1"):
 
 best_params = grid_search(INTERNAL_FOLDS_DIR, param_grid, metric_sort="f1")
 
-#%%
-# Carregar resultados do grid search do Random Forest
-GRID_SEARCH_DIR = r"C:\DEV\mestrado\WSD\experiments\folds\grid_search"
-df_rf = pd.read_csv(os.path.join(GRID_SEARCH_DIR, "grid_search_summary.csv"))
 
 
-def pareto_front(df, maximize='f1', minimize=['runtime_train', 'model_size']):
-    df = df.copy()
-    df['_dominated'] = False
-    for i in range(len(df)):
-        for j in range(len(df)):
-            if i == j: 
-                continue
-            # Verifica se j domina i: melhor F1 E menor custo
-            better_f1 = df.loc[j, maximize] >= df.loc[i, maximize]
-            better_costs = all(df.loc[j, c] <= df.loc[i, c] for c in minimize)
-            strictly_better = (df.loc[j, maximize] > df.loc[i, maximize]) or \
-                             any(df.loc[j, c] < df.loc[i, c] for c in minimize)
-            if better_f1 and better_costs and strictly_better:
-                df.loc[i, '_dominated'] = True
-                break
-    return df[~df['_dominated']].drop(columns=['_dominated'])
-
-pareto_rf = pareto_front(df_rf, maximize='f1', minimize=['runtime_train', 'model_size'])
-
-plt.figure(figsize=(14, 5))
-
-# F1 vs Tempo de Treino
-plt.subplot(1, 2, 1)
-plt.scatter(df_rf['runtime_train'], df_rf['f1'], 
-           c='gray', alpha=0.5, s=40, label='Todas combinações')
-plt.scatter(pareto_rf['runtime_train'], pareto_rf['f1'], 
-           c='red', s=100, edgecolors='black', linewidth=1.5, 
-           label='Fronteira de Pareto', zorder=5)
-plt.xlabel('Tempo de Treino (s)', fontsize=11)
-plt.ylabel('F1 Score', fontsize=11)
-plt.title('Random Forest: F1 vs Tempo de Treino', fontsize=12, fontweight='bold')
-plt.legend()
-plt.grid(alpha=0.3)
-
-# F1 vs Tamanho do Modelo
-plt.subplot(1, 2, 2)
-plt.scatter(df_rf['model_size']/1e6, df_rf['f1'], 
-           c='gray', alpha=0.5, s=40, label='Todas combinações')
-plt.scatter(pareto_rf['model_size']/1e6, pareto_rf['f1'], 
-           c='red', s=100, edgecolors='black', linewidth=1.5, 
-           label='Fronteira de Pareto', zorder=5)
-plt.xlabel('Tamanho do Modelo (MB)', fontsize=11)
-plt.ylabel('F1 Score', fontsize=11)
-plt.title('Random Forest: F1 vx Tamanho do Modelo', fontsize=12, fontweight='bold')
-plt.legend()
-plt.grid(alpha=0.3)
-
-plt.tight_layout()
-plt.show()
-
-
-pareto_table = pareto_rf.sort_values('f1', ascending=False)[[
-    'combo_id', 'n_estimators', 'max_features', 'min_samples_leaf',
-    'f1', 'runtime_train', 'runtime_inf', 'model_size'
-]].copy()
-pareto_table['model_size_mb'] = (pareto_table['model_size'] / 1e6).round(2)
-pareto_table = pareto_table.drop(columns=['model_size']).reset_index(drop=True)
-
-best_f1_row = pareto_table.iloc[0]
-print(f"Melhor F1: combo_id={int(best_f1_row['combo_id'])} → F1={best_f1_row['f1']:.4f} "
-      f"(n_est={int(best_f1_row['n_estimators'])}, max_feat={best_f1_row['max_features']}, "
-      f"min_leaf={int(best_f1_row['min_samples_leaf'])})")
-
-fastest = pareto_table.loc[pareto_table['runtime_train'].idxmin()]
-smallest = pareto_table.loc[pareto_table['model_size_mb'].idxmin()]
-
-print(f"\nmenor tempo: combo_id={int(fastest['combo_id'])} → {fastest['runtime_train']:.2f}s (F1={fastest['f1']:.4f})")
-print(f"menor tamanho: combo_id={int(smallest['combo_id'])} → {smallest['model_size_mb']:.2f}MB (F1={smallest['f1']:.4f})")
-# %%[Markdown] 
-# Avaliação com o fold externo
+# %%[Markdown] Avaliação do Random Forest
 def evaluate_model(EXTERNAL_FOLD_DIR, best_params):
     
     folds = sorted([
@@ -250,7 +178,7 @@ def evaluate_model(EXTERNAL_FOLD_DIR, best_params):
     
     rows_eval = []
     
-    # Ajuste dis tipos
+    # Ajuste dos tipos
     if 'n_estimators' in best_params: best_params['n_estimators'] = int(best_params['n_estimators'])
     if 'min_samples_leaf' in best_params: best_params['min_samples_leaf'] = int(best_params['min_samples_leaf'])
 
@@ -283,13 +211,15 @@ def evaluate_model(EXTERNAL_FOLD_DIR, best_params):
     df_results = pd.DataFrame(rows_eval)
     output_path = os.path.join(GRID_SEARCH_DIR, "Evaluation_results.csv")
     df_results.to_csv(output_path, index=False)
-    
-    display(df_results.mean(numeric_only=True))
+
+    df_summary = df_results.agg(['mean', 'std'])
+    df_summary.to_csv(os.path.join(GRID_SEARCH_DIR, "Evaluation_results_summary.csv"))
+    display(df_summary)
 
 evaluate_model(EXTERNAL_FOLD_DIR, best_params)
 
 
-#%%
+# %% [Markdown] Meslhores Parametros
 best_params_rf = {
     'n_estimators': 250,      
     'max_features': 0.6,
@@ -297,7 +227,7 @@ best_params_rf = {
     'n_jobs': -1,
     'random_state': 42
 }
-#%%
+#%% Curvas de Aprendizado
 def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
 
     folds = sorted([
@@ -314,8 +244,8 @@ def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 4 * n_rows))
     axes = axes.flatten()
     
-    step_size = 5 
-    
+    step_size = LEARNING_CURVE_STEP
+
     max_trees = params['n_estimators']
     
     rf_params = params.copy()
@@ -339,8 +269,6 @@ def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
         test_loss = []
         n_trees_axis = []
         
-        base_seed = 42 
-
         for n_trees in range(step_size, max_trees + 1, step_size):
             
             model = RandomForestClassifier(
@@ -387,70 +315,63 @@ def plot_learning_curves(EXTERNAL_FOLD_DIR, params):
 
 plot_learning_curves(EXTERNAL_FOLD_DIR, best_params_rf)
 
-#%%
-def plot_rf_feature_importance(train_path, best_params, top_n=20, figsize=(10, 8)):
-
-    # Carregar dados
-    X_train, y_train = fold_loader(train_path)
-    
-    # Remove n_jobs from best_params if it exists to avoid conflict
+#%% Importancia das Features
+def plot_rf_feature_importance(fold_dir, best_params, top_n=FEATURE_IMPORTANCE_TOP_N, figsize=(10, 8)):
     params = best_params.copy()
-    params.pop('n_jobs', None) 
-    
-    # Treinar modelo
-    model = RandomForestClassifier(
-        n_jobs=-1,
-        **params
-    )
-    model.fit(X_train, y_train)
-    
-    # Extrair importâncias
-    importances = model.feature_importances_
-    feature_names = X_train.columns
-    
-    # Criar DataFrame e ordenar
+    params.pop('n_jobs', None)
+
+    fold_ids = sorted([
+        int(f.replace("STRESS_fold", "").replace("_train.csv", ""))
+        for f in os.listdir(fold_dir)
+        if f.startswith("STRESS_fold") and f.endswith("_train.csv")
+    ])
+
+    all_importances = []
+    feature_names = None
+
+    for fold_id in fold_ids:
+        X_train, y_train = fold_loader(os.path.join(fold_dir, f"STRESS_fold{fold_id}_train.csv"))
+        model = RandomForestClassifier(n_jobs=-1, **params)
+        model.fit(X_train, y_train)
+        all_importances.append(model.feature_importances_)
+        if feature_names is None:
+            feature_names = X_train.columns
+
+    importances_arr = np.array(all_importances)
     feat_imp = pd.DataFrame({
         'feature': feature_names,
-        'importance': importances
-    }).sort_values('importance', ascending=False)
-    
-    # Selecionar top N
+        'importance_mean': importances_arr.mean(axis=0),
+        'importance_std': importances_arr.std(axis=0)
+    }).sort_values('importance_mean', ascending=False)
+
     top_features = feat_imp.head(top_n)
-    
-    # Plotar
+
     plt.figure(figsize=figsize)
     sns.barplot(
         data=top_features,
-        x='importance',
+        x='importance_mean',
         y='feature',
         palette='viridis'
     )
-    
-    plt.title(f'Features mais importantes para Random Forest', fontsize=14, fontweight='bold')
+
+    plt.title('Features mais importantes para Random Forest\n(Média ± std de todos os folds)', fontsize=14, fontweight='bold')
     plt.xlabel('Importância Média (Mean Decrease Impurity)', fontsize=11)
     plt.ylabel('Feature', fontsize=11)
     plt.grid(axis='x', alpha=0.3)
-    
-    # Adicionar valores nas barras
-    for i, v in enumerate(top_features['importance']):
-        plt.text(v + 0.001, i, f'{v:.4f}', va='center', fontsize=9)
-    
+
+    for i, (v, s) in enumerate(zip(top_features['importance_mean'], top_features['importance_std'])):
+        plt.text(v + FEATURE_LABEL_OFFSET, i, f'{v:.4f}±{s:.4f}', va='center', fontsize=9)
+
     plt.tight_layout()
     plt.show()
-    
-    # Retornar DataFrame completo para análise posterior
-    return feat_imp
-    
-    # Retornar DataFrame completo para análise posterior
-    return feat_imp
-# %%
-# Selecionar um fold externo para análise 
-train_path = os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold5_train.csv")
 
+    return feat_imp
+
+# %%
 feature_importance_df = plot_rf_feature_importance(
-    train_path=train_path,
+    fold_dir=EXTERNAL_FOLD_DIR,
     best_params=best_params_rf,
-    top_n=20,
+    top_n=FEATURE_IMPORTANCE_TOP_N,
     figsize=(10, 8)
 )
 
@@ -458,8 +379,8 @@ feature_importance_df.to_csv(
     os.path.join(GRID_SEARCH_DIR, "rf_feature_importance.csv"),
     index=False
 )
-#%%
 
+# %% Matriz de Confusão e Curva ROC
 rf_params = {
     'n_estimators': 250,      
     'max_features': 0.6,
@@ -469,7 +390,6 @@ rf_params = {
     'random_state': 42
 }
 
-#  IDENTIFICAÇÃO DOS FOLDS
 folds = sorted([
     int(f.replace("STRESS_fold", "").replace("_train.csv", ""))
     for f in os.listdir(EXTERNAL_FOLD_DIR) 
@@ -482,7 +402,6 @@ all_y_test_rf = []
 all_y_pred_rf = []
 all_y_proba_rf = []
 
-# AVALIAÇÃO COM OS FOLDS EXTERNOS
 for fold in tqdm(folds, desc="Avaliando Random Forest nos Folds"):
     train_path = os.path.join(EXTERNAL_FOLD_DIR, f"STRESS_fold{fold}_train.csv")
     test_path = os.path.join(EXTERNAL_FOLD_DIR, f"STRESS_fold{fold}_test.csv")
@@ -500,8 +419,6 @@ for fold in tqdm(folds, desc="Avaliando Random Forest nos Folds"):
     all_y_pred_rf.extend(y_pred)
     all_y_proba_rf.extend(y_proba)
 
-
-
 fig, ax = plt.subplots(figsize=(6, 5))
 cm_rf = confusion_matrix(all_y_test_rf, all_y_pred_rf)
 disp_rf = ConfusionMatrixDisplay(
@@ -518,7 +435,6 @@ disp_rf.plot(
 plt.title('Matriz de Confusão - Random Forest ', fontsize=14, fontweight='bold')
 plt.grid(False)
 plt.show()
-
 
 fig, ax = plt.subplots(figsize=(7, 6))
 
@@ -543,16 +459,21 @@ plt.show()
 
 
 # %%
-# %% Salvar melhor modelo
+# %% [Markdown] Salva o Modelo
 MODEL_SAVE_PATH = os.path.join(BASE_DIR, "best_rf_model.pkl")
 
-# Treino final com os melhores parâmetros identificados
-X_final, y_final = fold_loader(os.path.join(EXTERNAL_FOLD_DIR, "STRESS_fold5_train.csv"))
+# Train final model on all external fold training sets combined
+all_X_final, all_y_final = [], []
+for fold_id in folds:
+    X_fold, y_fold = fold_loader(os.path.join(EXTERNAL_FOLD_DIR, f"STRESS_fold{fold_id}_train.csv"))
+    all_X_final.append(X_fold)
+    all_y_final.append(y_fold)
+X_final = pd.concat(all_X_final, ignore_index=True)
+y_final = pd.concat(all_y_final, ignore_index=True)
+
 final_model = RandomForestClassifier(**best_params_rf)
 final_model.fit(X_final, y_final)
 
 with open(MODEL_SAVE_PATH, 'wb') as f:
     pickle.dump(final_model, f)
-
-print(f"Modelo salvo em: {MODEL_SAVE_PATH}")
 # %%
