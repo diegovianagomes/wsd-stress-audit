@@ -2,7 +2,7 @@
 # As quatro classes (REST, STRESS, AEROBIC, ANAEROBIC) estao em arquivos
 # separados, cada um com label 0 = REST e label 1 = o estado daquele arquivo.
 # Montar o problema de 4 classes exige uma decisao sobre o REST, ja que ele
-# aparece em todos os arquivos. Este script:
+# aparece em todos os arquivos:
 #   1. Inspeciona todos os dataset_*.csv (shape, label, protocolo, sujeitos).
 #   2. Mede a sobreposicao de janelas REST entre os arquivos, para decidir se o
 #      REST e compartilhado ou distinto por sessao.

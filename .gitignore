@@ -1,5 +1,5 @@
 # Dados
-data/
+#
 *.csv
 *.xlsx
 *.json
@@ -49,3 +49,10 @@ experiments/models/
 experiments/notebooks/
 experiments/nurse/
 resumos/
+
+# Exceções: versionar resultados e tabelas mesmo sendo .csv
+!experiments/results/
+!experiments/results/**/*.csv
+!experiments/tables/
+!experiments/tables/**/*.csv
+!src/data

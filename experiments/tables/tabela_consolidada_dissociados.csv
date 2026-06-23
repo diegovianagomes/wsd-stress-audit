@@ -1,0 +1,6 @@
+sujeito,mecanismo,n_rest,n_stress,autorrelato_rest,z_eda_ton_rest,z_scr_react,z_rmssd_react,z_pnn50_react,d_eda_ton,d_pnn50,shap_sep_eda,shap_sep_card,auc_RF,auc_XGB,auc_LGBM,auc_LGBM_semACC,recall_05_LGBM
+f02,"conflito de canais (EDA sobe, HRV inverte)",49,35,2.0,-0.49,2.89,0.96,0.86,0.92,0.72,-0.047,-0.057,0.373,0.447,0.413,0.431,0.457
+f03,invertido/refratario (EDA cai no estresse),55,43,2.33,0.12,-0.4,0.45,0.76,-0.84,0.34,0.121,-0.015,0.511,0.466,0.432,0.522,0.488
+f04,"limiar (assinatura limpa, mal limiarizada)",59,41,2.0,-0.63,0.52,-0.85,-1.79,0.8,-1.11,0.164,0.025,0.774,0.577,0.533,0.461,0.0
+f18,"conflito brando (EDA forte, FC cai); baseline nao elevado",54,34,3.0,-0.61,1.52,0.39,0.05,1.15,-0.04,-0.032,0.132,0.494,0.523,0.503,0.534,0.118
+f01,referencia: bem classificado (separa pela EDA),34,59,2.0,-0.6,0.11,0.14,-0.15,1.1,-0.39,0.873,0.431,0.859,0.876,0.842,0.884,0.797

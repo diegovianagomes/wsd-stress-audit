@@ -20,13 +20,13 @@
 #   shap_sep_card     : separacao SHAP do canal cardiaco (stress - rest)
 #   auc_RF/XGB/LGBM   : AUC por sujeito com 49 features, um por modelo
 #   auc_LGBM_semACC   : AUC por sujeito (LGBM) sem as features de ACC
-#   recall_05_LGBM    : recall de STRESS no limiar 0.5 (LGBM, full)================
+#   recall_05_LGBM    : recall de STRESS no limiar 0.5 (LGBM, full)
 
 import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr  # noqa: F401 (mantido p/ extensoes)
+from scipy.stats import spearmanr
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import roc_auc_score
 from sklearn.ensemble import RandomForestClassifier

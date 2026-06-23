@@ -1,4 +1,4 @@
-#%% ============================================================================
+#%% 
 # Objetivo: testar features que ajudem nos sujeitos cujo sinal autonomico
 # periferico nao separa estresse de repouso (dissociacao subjetivo-fisiologica),
 # identificados na analise por sujeito: f02, f03, f04, f18.
@@ -13,7 +13,7 @@
 #       enrollment: parte das janelas REST do sujeito de teste e separada para
 #       estimar o baseline e NAO entra na avaliacao. Quantifica o teto que a
 #       personalizacao alcancaria se fosse possivel coletar baseline.
-# ============================================================================
+
 
 #%%
 import sys
