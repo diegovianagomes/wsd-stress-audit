@@ -10,6 +10,7 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 import seaborn as sns
+import shap
 from tqdm import tqdm
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -24,13 +25,13 @@ from sklearn.metrics import (
     RocCurveDisplay
 )
 
-
+#%%[Markdown] Caminhos
 BASE_DIR = Path(__file__).resolve().parent.parent
 FOLDS_DIR = os.path.join(BASE_DIR, "folds")
 
-EXTERNAL_FOLD_DIR = os.path.join(FOLDS_DIR, "external_folds")
-INTERNAL_FOLDS_DIR = os.path.join(FOLDS_DIR, "internal_folds")
-GRID_SEARCH_DIR = os.path.join(FOLDS_DIR, "grid_search_rf")
+EXTERNAL_FOLD_DIR = os.path.join(FOLDS_DIR, "00externalFold")
+INTERNAL_FOLDS_DIR = os.path.join(FOLDS_DIR, "00internalFold")
+GRID_SEARCH_DIR = os.path.join(FOLDS_DIR, "00gridRF")
 
 os.makedirs(GRID_SEARCH_DIR, exist_ok=True)
 
@@ -367,7 +368,7 @@ def plot_rf_feature_importance(fold_dir, best_params, top_n=FEATURE_IMPORTANCE_T
 
     return feat_imp
 
-# %%
+# %% IF Plots
 feature_importance_df = plot_rf_feature_importance(
     fold_dir=EXTERNAL_FOLD_DIR,
     best_params=best_params_rf,
@@ -380,11 +381,101 @@ feature_importance_df.to_csv(
     index=False
 )
 
+# %% SHAP Explainability
+def plot_shap_importance(fold_dir, best_params, top_n=FEATURE_IMPORTANCE_TOP_N, figsize=(10, 8)):
+    params = best_params.copy()
+    params.pop('n_jobs', None)
+
+    fold_ids = sorted([
+        int(f.replace("STRESS_fold", "").replace("_train.csv", ""))
+        for f in os.listdir(fold_dir)
+        if f.startswith("STRESS_fold") and f.endswith("_train.csv")
+    ])
+
+    all_shap_values = []
+    all_X_test = []
+    feature_names = None
+
+    for fold_id in tqdm(fold_ids, desc="SHAP por Fold"):
+        X_train, y_train = fold_loader(os.path.join(fold_dir, f"STRESS_fold{fold_id}_train.csv"))
+        X_test, _ = fold_loader(os.path.join(fold_dir, f"STRESS_fold{fold_id}_test.csv"))
+
+        model = RandomForestClassifier(n_jobs=-1, **params)
+        model.fit(X_train, y_train)
+
+        explainer = shap.TreeExplainer(model)
+        shap_vals = explainer.shap_values(X_test)
+        # shap_values for class 1 (Stress)
+        # Old SHAP API: list of arrays per class
+        # New SHAP API: 3D array (n_samples, n_features, n_classes)
+        if isinstance(shap_vals, list):
+            shap_vals = shap_vals[1]
+        elif shap_vals.ndim == 3:
+            shap_vals = shap_vals[:, :, 1]
+
+        all_shap_values.append(shap_vals)
+        all_X_test.append(X_test)
+
+        if feature_names is None:
+            feature_names = X_test.columns.tolist()
+
+    shap_matrix = np.vstack(all_shap_values)
+    X_concat = pd.concat(all_X_test, ignore_index=True)
+
+    # Mean |SHAP| per feature
+    mean_abs_shap = np.abs(shap_matrix).mean(axis=0)
+    shap_df = pd.DataFrame({
+        'feature': feature_names,
+        'mean_abs_shap': mean_abs_shap
+    }).sort_values('mean_abs_shap', ascending=False)
+
+    shap_df.to_csv(os.path.join(GRID_SEARCH_DIR, "rf_shap_importance.csv"), index=False)
+
+    # Beeswarm summary plot (top N features)
+    top_features = shap_df.head(top_n)['feature'].tolist()
+    top_idx = [feature_names.index(f) for f in top_features]
+
+    plt.figure(figsize=figsize)
+    shap.summary_plot(
+        shap_matrix[:, top_idx],
+        X_concat[top_features],
+        plot_type="dot",
+        max_display=top_n,
+        show=False
+    )
+    plt.title("SHAP Summary (Beeswarm) - Random Forest\n(Classe: Stress)", fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(os.path.join(GRID_SEARCH_DIR, "rf_shap_beeswarm.png"), dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # Bar plot: mean |SHAP|
+    plt.figure(figsize=figsize)
+    shap.summary_plot(
+        shap_matrix[:, top_idx],
+        X_concat[top_features],
+        plot_type="bar",
+        max_display=top_n,
+        show=False
+    )
+    plt.title("SHAP Mean |value| - Random Forest", fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(os.path.join(GRID_SEARCH_DIR, "rf_shap_bar.png"), dpi=150, bbox_inches='tight')
+    plt.show()
+
+    return shap_df
+
+shap_importance_df = plot_shap_importance(
+    fold_dir=EXTERNAL_FOLD_DIR,
+    best_params=best_params_rf,
+    top_n=FEATURE_IMPORTANCE_TOP_N,
+    figsize=(10, 8)
+)
+
 # %% Matriz de Confusão e Curva ROC
 rf_params = {
     'n_estimators': 250,      
     'max_features': 0.6,
-    #'max_depth': 15,          
+    #'max_depth': 25,          
     'min_samples_leaf': 1,   
     'n_jobs': -1,             
     'random_state': 42
@@ -458,8 +549,13 @@ ax.grid(alpha=0.3)
 plt.show()
 
 
-# %%
-# %% [Markdown] Salva o Modelo
+'''
+| true lable|rest |1038 |189 |
+| true lable |stress | 186|904 |
+|       | rest | stress|
+|        | prediction |
+'''
+|# %% [Markdown] Salva o Modelo
 MODEL_SAVE_PATH = os.path.join(BASE_DIR, "best_rf_model.pkl")
 
 # Train final model on all external fold training sets combined

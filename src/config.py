@@ -1,13 +1,11 @@
 import os
 from pathlib import Path
 
-WORK_SEED = 42
-
-DATA_DIR = Path("C:/DEV/mestrado/WSD/data")
-RAW_DATA_DIR = DATA_DIR / "Wearable_Dataset"
-
 SRC_DIR = Path(__file__).parent
 PROJECT_ROOT = SRC_DIR.parent
+
+DATA_DIR = SRC_DIR / "data"
+RAW_DATA_DIR = DATA_DIR / "Wearable_Dataset"
 
 EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
 PROCESSED_DIR = EXPERIMENTS_DIR / "processed"
@@ -17,6 +15,7 @@ PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Reprodutibilidade
+WORK_SEED = 42
 RANDOM_SEED = 42
 
 # Frequências 

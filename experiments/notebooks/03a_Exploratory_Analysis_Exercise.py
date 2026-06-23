@@ -33,7 +33,6 @@ df_exercise.drop(columns=['protocol'], inplace=True)
 df_exercise.info()
 # %%
 df_exercise.describe()
-#%%
 
 # %%[markdown]
 # Estatisticas Básicas

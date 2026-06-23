@@ -5,28 +5,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from sklearn.model_selection import KFold, GroupKFold, StratifiedKFold,LeaveOneGroupOut, train_test_split
-
-#%%
 print("Diretório atual:", os.getcwd())
-#%%[Markdown]
-# Caminhos
+#%%[Markdown] Caminhos
 CSV_PATH = os.path.join("..", "processed", "dataset_stress.csv")
 BASE_OUTPUT_DIR = ".."
 FOLDS_DIR = os.path.join(BASE_OUTPUT_DIR, "folds")
-INTERNAL_FOLDS_DIR = os.path.join(FOLDS_DIR, "internal_folds")
-EXTERNAL_FOLD_DIR = os.path.join(FOLDS_DIR, "external_folds")
-KFOLD_DIR = os.path.join(FOLDS_DIR, "kfold_regression")
-CLUSTER_DIR = os.path.join(FOLDS_DIR, "kfold_cluster")
-LOGO_DIR = os.path.join(FOLDS_DIR, "logo_fold")
+INTERNAL_FOLDS_DIR = os.path.join(FOLDS_DIR, "00internalFold") # Se for fazer outro experimento Salve 01...
+EXTERNAL_FOLD_DIR = os.path.join(FOLDS_DIR, "00externalFold")  # Se for fazer outro experimento Salve 01...
+KFOLD_DIR = os.path.join(FOLDS_DIR, "00kfoldregressao") # Se for fazer outro experimento Salve 01...
+CLUSTER_DIR = os.path.join(FOLDS_DIR, "00kfoldcluster") # Se for fazer outro experimento Salve 01...
+LOGO_DIR = os.path.join(FOLDS_DIR, "00logo_fold")       # Se for fazer outro experimento Salve 01...
 
 
-#%%[Markdown]
-# Variavel Alvo
+#%%[Markdown] Variavel Alvo
 TARGET = "label"
 GROUP_COL = "subject_id"
 
-#%%[Markdown}
-# Cria os diretórios 
+#%%[Markdown} Cria Diretórios
 os.makedirs(FOLDS_DIR, exist_ok=True)
 os.makedirs(INTERNAL_FOLDS_DIR, exist_ok=True)
 os.makedirs(EXTERNAL_FOLD_DIR, exist_ok=True)
@@ -34,8 +29,7 @@ os.makedirs(KFOLD_DIR, exist_ok=True)
 os.makedirs(CLUSTER_DIR, exist_ok=True)
 os.makedirs(LOGO_DIR, exist_ok=True)
 
-# %% [Markdown] 
-#
+# %% [Markdown] Carrega os dados
 def carregar_dados(caminho):
     data = pd.read_csv(caminho)
     
@@ -45,8 +39,7 @@ def carregar_dados(caminho):
 
 data_full, X_data, y_data = carregar_dados(CSV_PATH)
 
-# %% [Markdown] 
-# Folds externos
+# %% [Markdown] Folds Externos
 def external_folds(data, X, y, n_splits=10):
     
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
@@ -79,8 +72,7 @@ def external_folds(data, X, y, n_splits=10):
 
 external_folds(data_full, X_data, y_data)
 
-# %% [Markdown]
-# Fold Inteno
+# %% [Markdown] Folds Internos
 def internal_folds(n_splits=10):
     
     info_internal = []
@@ -111,8 +103,7 @@ def internal_folds(n_splits=10):
     pd.DataFrame(info_internal).to_csv(os.path.join(INTERNAL_FOLDS_DIR, "STRESS_fold_info.csv"), index=False)
 
 internal_folds()
-# %% [Markdown]
-# Kfold
+# %% [Markdown] Kfold
 # Gera folds para Regressão/Agrupamento 
 def kfold(data, X, n_splits=10):
     
@@ -139,7 +130,7 @@ def kfold(data, X, n_splits=10):
 
 kfold(data_full, X_data)
 
-# %% Agrupamento 
+# %% [Markdown] Agrupamento
 def kfold_cluster(data, target_col, group_col, n_splits=10):
 
     data_cluster = data.drop(columns=[target_col], errors='ignore')
@@ -172,8 +163,8 @@ def kfold_cluster(data, target_col, group_col, n_splits=10):
 
 kfold_cluster(data_full, target_col=TARGET, group_col=GROUP_COL, n_splits=10)
 
-# %% [Markdown]
-# LOGO - LeaveOneGroupOut
+# %% [Markdown] LOGO - LeaveOneGroupOut
+# 
 def logo_folds(data, target_col, group_col='subject_id'):
 
     # Preparação

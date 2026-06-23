@@ -10,13 +10,21 @@ class FeatureExtractor:
         self.window_size = window_size
         self.step_size = step_size
 
-    def calculate_slope_ratios(self, series):
+    def calculate_change_ratios(self, series):
+        if len(series) < 2:
+            return 0.0, 0.0
+        diff = np.diff(series)
+        ratio_max = np.percentile(diff, 95)
+        ratio_min = np.percentile(diff, 5)
+        return ratio_max, ratio_min
+
+    '''def calculate_slope_ratios(self, series):
         if len(series) < 2: return 0.0, 0.0
         diff = np.diff(series)
         n = len(diff) if len(diff) > 0 else 1
         ratio_up = np.sum(diff > 0) / n
         ratio_down = np.sum(diff < 0) / n
-        return ratio_up, ratio_down
+        return ratio_up, ratio_down'''
     
     # BVP
     def extract_bvp_features(self, bvp_window):
@@ -34,9 +42,12 @@ class FeatureExtractor:
         vals = hr_window.values.flatten()
         feats['hr_mean'] = np.mean(vals)
         feats['hr_std'] = np.std(vals)
-        r_up, r_down = self.calculate_slope_ratios(vals)
+        r_max, r_min = self.calculate_change_ratios(vals)
+        feats['hr_ratio_up'] = r_max
+        feats['hr_ratio_down'] = r_min
+        '''r_up, r_down = self.calculate_slope_ratios(vals)
         feats['hr_ratio_up'] = r_up
-        feats['hr_ratio_down'] = r_down
+        feats['hr_ratio_down'] = r_down'''
         return feats
 
     # ACC
@@ -65,9 +76,12 @@ class FeatureExtractor:
         mag = np.sqrt(acc_window['x']**2 + acc_window['y']**2 + acc_window['z']**2).values
         feats['acc_mean'] = np.mean(mag)
         feats['acc_std'] = np.std(mag)
-        r_up, r_down = self.calculate_slope_ratios(mag)
+        r_max, r_min = self.calculate_change_ratios(mag)
+        feats['acc_ratio_up'] = r_max
+        feats['acc_ratio_down'] = r_min
+        '''r_up, r_down = self.calculate_slope_ratios(mag)
         feats['acc_ratio_up'] = r_up
-        feats['acc_ratio_down'] = r_down
+        feats['acc_ratio_down'] = r_down'''
         return feats
 
     # EDA
@@ -102,9 +116,12 @@ class FeatureExtractor:
             
             feats['mean_tonic_eda'] = np.mean(tonic)
             feats['std_tonic_eda'] = np.std(tonic)
-            t_up, t_down = self.calculate_slope_ratios(tonic)
+            t_max, t_min = self.calculate_change_ratios(tonic)
+            feats['tonic_ratio_up'] = t_max
+            feats['tonic_ratio_down'] = t_min
+            '''t_up, t_down = self.calculate_slope_ratios(tonic)
             feats['tonic_ratio_up'] = t_up
-            feats['tonic_ratio_down'] = t_down
+            feats['tonic_ratio_down'] = t_down'''
             
             feats['mean_phasic_eda'] = np.mean(phasic)
             feats['std_phasic_eda'] = np.std(phasic)
@@ -199,8 +216,8 @@ class FeatureExtractor:
                 if not np.any(mask): return 0.0, 0.0
                 
                 # Potência = Área sob a curva 
-                power = np.trapz(p_arr[mask], f_arr[mask])
-                
+                power = np.trapezoid(p_arr[mask], f_arr[mask])
+
                 # Pico = Frequência onde a potência é máxima
                 peak_idx = np.argmax(p_arr[mask])
                 peak_freq = f_arr[mask][peak_idx]
@@ -234,7 +251,7 @@ class FeatureExtractor:
                 feats['HF_n'] = hf_p / total_p
 
         except Exception as e:
-            pass
+            print(f"FREQ_ERR: {e}")  # era 'pass'
 
         for k in feats:
             if pd.isna(feats[k]) or np.isinf(feats[k]): feats[k] = 0.0
@@ -258,11 +275,13 @@ class FeatureExtractor:
             bvp_win = raw_data_dict['BVP'][t_start:t_end] if 'BVP' in raw_data_dict else pd.DataFrame()
             eda_win = raw_data_dict['EDA'][t_start:t_end] if 'EDA' in raw_data_dict else pd.DataFrame()
             hr_win  = raw_data_dict['HR'][t_start:t_end]  if 'HR' in raw_data_dict else pd.DataFrame()
-
+            
+            ibi_win = self.extract_ibi_from_bvp(bvp_win)
+            '''
             ibi_win = pd.Series(dtype=float)
-            if 'IBI' in raw_data_dict:
+            if 'IBI' in raw_data_dict and not raw_data_dict['IBI'].empty:
                 ibi_slice = raw_data_dict['IBI'][t_start:t_end]
-                if not ibi_slice.empty: ibi_win = ibi_slice.iloc[:, -1]
+                if not ibi_slice.empty: ibi_win = ibi_slice.iloc[:, -1]'''
 
             label_slice = labels_df[t_start:t_end]['label']
             if label_slice.empty: continue
@@ -278,3 +297,39 @@ class FeatureExtractor:
             features_list.append(row)
             
         return pd.DataFrame(features_list)
+
+    def extract_ibi_from_bvp(self, bvp_window, fs=64):
+        """
+        Deriva IBI a partir dos picos do BVP filtrado, substituindo IBI.csv.
+        
+        Hongn et al. (2025): 'BVP was filtered, and wave peaks were detected
+        to obtain pulse intervals. We then obtained the normal pulse-to-pulse
+        intervals, discarding ectopic and incorrectly detected beats.'
+        
+        Usa scipy.signal.find_peaks com distância mínima correspondente a
+        200 bpm (0.3s) e filtra IBIs fora de [0.3, 1.3] segundos.
+        """
+        if bvp_window.empty or len(bvp_window) < fs * 2:
+            return pd.Series(dtype=float)
+        
+        vals = bvp_window.values.flatten()
+        
+        # Detecta picos: distância mínima = 0.3s * fs (200 bpm máx)
+        min_distance = int(0.3 * fs)
+        peaks, properties = signal.find_peaks(vals, distance=min_distance,
+                                            prominence=0.1 * np.std(vals))
+        
+        if len(peaks) < 3:
+            return pd.Series(dtype=float)
+        
+        # Calcula IBI em segundos
+        ibi_samples = np.diff(peaks)
+        ibi_seconds = ibi_samples / fs
+        
+        # Filtra ectópicos (Hongn: 'discarding ectopic and incorrectly detected beats')
+        ibi_clean = ibi_seconds[(ibi_seconds >= 0.3) & (ibi_seconds <= 1.3)]
+        
+        if len(ibi_clean) < 3:
+            return pd.Series(dtype=float)
+        
+        return pd.Series(ibi_clean)

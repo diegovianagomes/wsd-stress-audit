@@ -61,32 +61,69 @@ def get_stress_phases(subject_id):
         
     return []
 
-def get_aerobic_phases(subject_id):
-    return
-
 def get_anaerobic_phases(subject_id):
-    return
-    
+    """
+    Fases de sprint no apply_labels (conta a partir do primeiro tag).
+    V1 (Sxx, 7 tags): Sprint1=fase0, Sprint2=fase2, Sprint3=fase4
+    V2 (Fxx, 11 tags): Sprint1=fase1, Sprint2=fase3, Sprint3=fase5, Sprint4=fase7
+    """
+    sid = subject_id.upper()
+    if sid.startswith('S'):
+        return [0, 2, 4]
+    elif sid.startswith('F'):
+        return [1, 3, 5, 7]
+    return []
+
+def get_aerobic_phases(subject_id):
+    """
+    Fases de ciclismo no apply_labels (conta a partir do primeiro tag).
+    V1 (Sxx, 12 tags): 10 estágios (60-110 rpm) = fases 0..9
+    V2 (Fxx, 8 tags): 4 estágios (70, 75, 85, 90/95) = fases 1..4
+    """
+    sid = subject_id.upper()
+    if sid.startswith('S'):
+        return list(range(0, 10))
+    elif sid.startswith('F'):
+        return [1, 2, 3, 4]
+    return []
 #%%[Markdown]
 # Aplica labels (0=Repouso, 1=Stress)
-def apply_labels(df_sync, tags_df, subject_id):
-
+def apply_labels(df_sync, tags_df, subject_id, protocol='STRESS'):
+    """
+    Aplica labels binários (0=repouso/não-exercício, 1=estresse/exercício).
+    
+    O mapeamento de fases depende do protocolo e da versão (Sxx vs Fxx):
+        STRESS:    get_stress_phases
+        ANAEROBIC: get_anaerobic_phases
+        AEROBIC:   get_aerobic_phases
+    """
     df_sync['label'] = 0
-    if tags_df.empty: return df_sync
+    if tags_df.empty:
+        return df_sync
 
-    stress_phases = get_stress_phases(subject_id)
+    # Seleciona as fases ativas conforme o protocolo
+    phase_map = {
+        'STRESS': get_stress_phases,
+        'ANAEROBIC': get_anaerobic_phases,
+        'AEROBIC': get_aerobic_phases,
+    }
+    
+    get_phases = phase_map.get(protocol)
+    if not get_phases:
+        raise ValueError(f"Protocolo desconhecido: {protocol}")
+    
+    active_phases = get_phases(subject_id)
     
     tag_times = tags_df['seconds_rel'].tolist()
     tag_times.append(df_sync.index.total_seconds().max())
 
     for i in range(len(tag_times) - 1):
-        if i in stress_phases:
+        if i in active_phases:
             start = tag_times[i]
-            end = tag_times[i+1]
-            
+            end = tag_times[i + 1]
             mask = (df_sync.index.total_seconds() >= start) & \
                    (df_sync.index.total_seconds() < end)
             df_sync.loc[mask, 'label'] = 1
-            
+
     return df_sync
 # %%

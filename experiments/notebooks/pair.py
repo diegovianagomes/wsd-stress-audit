@@ -1,311 +1,396 @@
-#%%
+# %% [Markdown] COMPARAÇÃO ESTATÍSTICA: Grid Search vs Bayesian Optimization
+# Random Forest, XGBoost, LightGBM
+# Testes: Wilcoxon, t-test pareado, Friedman, Post-hoc Bonferroni, Bootstrap CI, Cohen's d
 
-import os
-from pathlib import Path
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
+import matplotlib.gridspec as gridspec
 from scipy import stats
+import warnings
+warnings.filterwarnings('ignore')
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-RF_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search_rf", "Evaluation_results.csv")
-XGB_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search_xgb", "xgb_final_evaluation.csv")
+# Grid Search 
+RF_GRID_PATH = "../folds/grid_search_rf/Evaluation_rf_results.csv"
+XGB_GRID_PATH = "../folds/grid_search_xgb/xgb_final_evaluation.csv"
+LGB_GRID_PATH = "../folds/grid_search_lgb/lgb_final_evaluation.csv"
 
-#%%
-df_rf  = pd.read_csv(RF_RESULTS)
-df_xgb = pd.read_csv(XGB_RESULTS)
+# Bayesian Optimization 
+RF_BAY_PATH = "../folds/bayesian_rf/bayesian_rf_evaluation.csv"
+XGB_BAY_PATH = "../folds/bayesian_xgb/bayesian_xgb_evaluation.csv"
+LGB_BAY_PATH = "../folds/bayesian_lgb/bayesian_lgb_evaluation.csv"
 
+METRICS = ['roc_auc', 'auprc', 'f1', 'precision', 'recall']
+ALPHA = 0.05
+N_BOOTSTRAP = 10000
+SEED = 42
 
-# %%
-df_rf.columns = [c.lower().strip() for c in df_rf.columns]
-df_xgb.columns = [c.lower().strip() for c in df_xgb.columns]
-#%%
-df_rf.columns
+# ============================================================
+# CARREGAMENTO
+# ============================================================
+rf_grid = pd.read_csv(RF_GRID_PATH)
+xgb_grid = pd.read_csv(XGB_GRID_PATH)
+lgb_grid = pd.read_csv(LGB_GRID_PATH)
+rf_bay = pd.read_csv(RF_BAY_PATH)
+xgb_bay = pd.read_csv(XGB_BAY_PATH)
+lgb_bay = pd.read_csv(LGB_BAY_PATH)
 
-# %%
-required_cols = ['fold', 'f1', 'roc_auc', 'precision', 'recall']
-
-for df, name in [(df_rf, 'RF'), (df_xgb, 'XGB')]:
-    print(f'Colunas: {df.columns.tolist()}')
-
-df_compare = (
-    df_rf[required_cols]
-    .merge(
-        df_xgb[required_cols],
-        on='fold',
-        suffixes=('_rf', '_xgb')
-    )
-)
-display(df_compare.head(10))
-
-# %%
-
-metricas = pd.DataFrame({
-    'Modelo': ['Random Forest', 'XGBoost'],
-})
-
-stats_metricas = {
-    'roc_auc': 'ROC AUC',
-    'f1': 'F1',
-    'precision': 'Precision',
-    'recall': 'Recall',
+all_configs = {
+    'RF_Grid': rf_grid, 'RF_Bayesian': rf_bay,
+    'XGB_Grid': xgb_grid, 'XGB_Bayesian': xgb_bay,
+    'LGB_Grid': lgb_grid, 'LGB_Bayesian': lgb_bay
 }
 
-for metric, label in stats_metricas.items():
-    metricas[f'Média {label}'] = [
-        df_compare[f'{metric}_rf'].mean(),
-        df_compare[f'{metric}_xgb'].mean(),
-    ]
-    metricas[f'Desvio Padrão {label}'] = [
-        df_compare[f'{metric}_rf'].std(),
-        df_compare[f'{metric}_xgb'].std(),
-    ]
-    metricas[f'Min {label}'] = [
-        df_compare[f'{metric}_rf'].min(),
-        df_compare[f'{metric}_xgb'].min(),
-    ]
-    metricas[f'Max {label}'] = [
-        df_compare[f'{metric}_rf'].max(),
-        df_compare[f'{metric}_xgb'].max(),
-    ]
-metricas
+# Melhor configuração de cada modelo (baseado nos resultados)
+best_configs = {
+    'RF': rf_grid,      # Grid venceu
+    'XGB': xgb_grid,    # Grid venceu
+    'LGB': lgb_bay      # Bayesian venceu
+}
 
-# %% [markdown]
-# Diferencia entre os modelos (XGBoost - Random Forest)
+# %% ============================================================
+# 1. ESTATÍSTICAS DESCRITIVAS
+# ============================================================
+print("=" * 100)
+print("1. ESTATÍSTICAS DESCRITIVAS")
+print("=" * 100)
 
-diff_stats = []
-for metric, label in stats_metricas.items():
-    df_compare[f'diff_{metric}'] = df_compare[f'{metric}_xgb'] - df_compare[f'{metric}_rf']
-    diff_stats.append({
-        'Métrica': label,
-        'Diff media (XGB - RF)': df_compare[f'diff_{metric}'].mean(),
-        'Desvio Padrão': df_compare[f'diff_{metric}'].std(),
-    })
+desc_rows = []
+for name, df in all_configs.items():
+    row = {'Config': name}
+    for m in METRICS:
+        row[f'{m}_mean'] = df[m].mean()
+        row[f'{m}_std'] = df[m].std()
+        row[f'{m}_median'] = df[m].median()
+        row[f'{m}_min'] = df[m].min()
+        row[f'{m}_max'] = df[m].max()
+        row[f'{m}_cv'] = df[m].std() / df[m].mean() * 100
+    desc_rows.append(row)
 
-df_diff_stats = pd.DataFrame(diff_stats)
-df_diff_stats
+desc_df = pd.DataFrame(desc_rows)
 
-# %% [markdown]
-# Teste de Hipótese para cada métrica
+for m in ['f1', 'roc_auc']:
+    print(f"\n  {m.upper()}:")
+    print(f"  {'Config':18s} {'Mean':>8s} {'Std':>8s} {'Median':>8s} {'Min':>8s} {'Max':>8s} {'CV%':>8s}")
+    print(f"  {'-'*66}")
+    for _, r in desc_df.iterrows():
+        print(f"  {r['Config']:18s} {r[f'{m}_mean']:8.4f} {r[f'{m}_std']:8.4f} "
+              f"{r[f'{m}_median']:8.4f} {r[f'{m}_min']:8.4f} {r[f'{m}_max']:8.4f} {r[f'{m}_cv']:8.2f}")
 
-ttest_results = []
-for metric, label in stats_metricas.items():
-    diff = df_compare[f'{metric}_rf'] - df_compare[f'{metric}_xgb']
-    _, p_shapiro = stats.shapiro(diff)
-    normal = p_shapiro >= 0.05
+# %% ============================================================
+# 2. TESTES PAREADOS: Grid vs Bayesian (por modelo)
+# ============================================================
+print(f"\n\n{'=' * 100}")
+print("2. TESTES PAREADOS: Grid vs Bayesian (mesmo modelo, mesmos folds)")
+print("   Wilcoxon signed-rank (não-paramétrico) + t-test pareado + Cohen's d")
+print("=" * 100)
 
-    if normal:
-        t_stat, p_value = stats.ttest_rel(
-            df_compare[f'{metric}_rf'],
-            df_compare[f'{metric}_xgb']
-        )
-        test_used = 'paired t-test'
-    else:
-        t_stat, p_value = stats.wilcoxon(
-            df_compare[f'{metric}_rf'],
-            df_compare[f'{metric}_xgb'],
-            zero_method='wilcox'
-        )
-        test_used = 'Wilcoxon'
+paired_results = []
 
-    ttest_results.append({
-        'Métrica': label,
-        'Shapiro p-value': round(p_shapiro, 4),
-        'Normalidade': 'Sim' if normal else 'Não',
-        'Teste Usado': test_used,
-        't_stat (RF - XGB)': t_stat,
-        'p-value': p_value,
-        'Significativo (p < 0.05)': 'Sim' if p_value < 0.05 else 'Não'
-    })
+for model, grid, bay in [("RF", rf_grid, rf_bay),
+                          ("XGB", xgb_grid, xgb_bay),
+                          ("LGB", lgb_grid, lgb_bay)]:
+    print(f"\n  {model}:")
+    for m in METRICS:
+        g_vals = grid[m].values
+        b_vals = bay[m].values
+        diff = b_vals - g_vals
 
-df_ttest = pd.DataFrame(ttest_results)
-df_ttest
+        # Wilcoxon signed-rank test
+        try:
+            w_stat, w_p = stats.wilcoxon(b_vals, g_vals)
+        except Exception:
+            w_stat, w_p = np.nan, np.nan
 
-# %% [markdown]
-# Teste Não-Paramétrico Wilcoxon Signed-Rank
+        # Paired t-test
+        t_stat, t_p = stats.ttest_rel(b_vals, g_vals)
 
-metrics = [
-    ('ROC AUC', 'roc_auc_rf', 'roc_auc_xgb'),
-    ('F1 Score', 'f1_rf', 'f1_xgb'),
-    ('Precision', 'precision_rf', 'precision_xgb'),
-    ('Recall', 'recall_rf', 'recall_xgb')
-]
+        # Cohen's d (pareado)
+        d_mean = diff.mean()
+        d_std = diff.std()
+        cohens_d = d_mean / d_std if d_std > 0 else 0
 
-wilcoxon_results = []
-for name, col_rf, col_xgb in metrics:
-    stat, p_val = stats.wilcoxon(df_compare[col_rf], df_compare[col_xgb], zero_method='wilcox')
-    wilcoxon_results.append({
-        'Métrica': name,
-        'w_stat': stat,
-        'p-value': p_val,
-        'Significativo (p < 0.05)': 'Sim' if p_val < 0.05 else 'Não'
-    })
+        winner = "Bay" if d_mean > 0 else "Grid"
+        sig_w = "*" if w_p < ALPHA else " "
+        sig_t = "*" if t_p < ALPHA else " "
 
-df_wilcoxon = pd.DataFrame(wilcoxon_results)
-df_wilcoxon
+        paired_results.append({
+            'model': model, 'metric': m, 'delta': d_mean,
+            'wilcoxon_p': w_p, 'ttest_p': t_p, 'cohens_d': cohens_d
+        })
+
+        print(f"    {m:12s}: Δ={d_mean:+.4f} ({winner:4s}) | "
+              f"Wilcoxon p={w_p:.4f}{sig_w} | t-test p={t_p:.4f}{sig_t} | "
+              f"Cohen's d={cohens_d:+.3f}")
+
+# %% ============================================================
+# 3. TESTE DE FRIEDMAN + POST-HOC
+# ============================================================
+print(f"\n\n{'=' * 100}")
+print("3. TESTE DE FRIEDMAN (k=3 melhores modelos, 10 folds pareados)")
+print("   + Post-hoc Wilcoxon pairwise com correção de Bonferroni")
+print("=" * 100)
+
+print(f"\n  Friedman (H0: todas as distribuições são iguais):")
+friedman_results = {}
+for m in METRICS:
+    vals = [best_configs[model][m].values for model in ['RF', 'XGB', 'LGB']]
+    chi2, p_fried = stats.friedmanchisquare(*vals)
+    sig = "***" if p_fried < 0.001 else "**" if p_fried < 0.01 else "*" if p_fried < 0.05 else "ns"
+    friedman_results[m] = {'chi2': chi2, 'p': p_fried}
+    print(f"    {m:12s}: χ²={chi2:.3f}, p={p_fried:.4f} {sig}")
+
+# Post-hoc
+pairs = [('RF', 'XGB'), ('RF', 'LGB'), ('XGB', 'LGB')]
+n_comparisons = len(pairs)
+
+print(f"\n  Post-hoc Wilcoxon (Bonferroni α_adj = {ALPHA/n_comparisons:.4f}):")
+posthoc_results = []
+
+for m in METRICS:
+    print(f"\n    {m.upper()}:")
+    for m1, m2 in pairs:
+        v1 = best_configs[m1][m].values
+        v2 = best_configs[m2][m].values
+        diff_mean = v2.mean() - v1.mean()
+
+        try:
+            stat, p_raw = stats.wilcoxon(v1, v2)
+        except Exception:
+            stat, p_raw = np.nan, 1.0
+
+        p_adj = min(p_raw * n_comparisons, 1.0)  # Bonferroni
+        sig = "*" if p_adj < ALPHA else " "
+        winner = m2 if diff_mean > 0 else m1
+
+        posthoc_results.append({
+            'metric': m, 'pair': f"{m1} vs {m2}",
+            'delta': diff_mean, 'p_raw': p_raw, 'p_adj': p_adj
+        })
+
+        print(f"      {m1} vs {m2}: Δ={diff_mean:+.4f} ({winner:3s} ↑) | "
+              f"p_raw={p_raw:.4f} | p_adj={p_adj:.4f}{sig}")
+
+# %% ============================================================
+# 4. RANKING MÉDIO POR FOLD
+# ============================================================
+print(f"\n\n{'=' * 100}")
+print("4. RANKING MÉDIO POR FOLD (1=melhor em cada fold)")
+print("=" * 100)
+
+for m in METRICS:
+    print(f"\n  {m.upper()}:")
+    fold_data = pd.DataFrame({name: df[m].values for name, df in all_configs.items()})
+    ranks = fold_data.rank(axis=1, ascending=False)
+    mean_ranks = ranks.mean().sort_values()
+
+    for config in mean_ranks.index:
+        bar = "█" * int(mean_ranks[config] * 3)
+        print(f"    {config:14s}: rank médio = {mean_ranks[config]:.2f} {bar}")
+
+# %% ============================================================
+# 5. BOOTSTRAP CONFIDENCE INTERVALS
+# ============================================================
+print(f"\n\n{'=' * 100}")
+print(f"5. BOOTSTRAP 95% CONFIDENCE INTERVALS (F1, n={N_BOOTSTRAP})")
+print("=" * 100)
+
+np.random.seed(SEED)
+
+bootstrap_ci = {}
+for name, df in all_configs.items():
+    f1_vals = df['f1'].values
+    boot_means = np.array([
+        np.mean(np.random.choice(f1_vals, size=len(f1_vals), replace=True))
+        for _ in range(N_BOOTSTRAP)
+    ])
+    ci_low = np.percentile(boot_means, 2.5)
+    ci_high = np.percentile(boot_means, 97.5)
+    bootstrap_ci[name] = (ci_low, f1_vals.mean(), ci_high)
+    print(f"  {name:18s}: {f1_vals.mean():.4f} [{ci_low:.4f}, {ci_high:.4f}]")
+
+# Bootstrap da diferença: melhor vs segundo melhor
+print(f"\n  Diferença LGB_Bayesian - XGB_Grid (1o vs 2o):")
+lgb_vals = lgb_bay['f1'].values
+xgb_vals = xgb_grid['f1'].values
+boot_diffs = np.array([
+    np.mean(np.random.choice(lgb_vals, size=len(lgb_vals), replace=True)) -
+    np.mean(np.random.choice(xgb_vals, size=len(xgb_vals), replace=True))
+    for _ in range(N_BOOTSTRAP)
+])
+ci_low_d = np.percentile(boot_diffs, 2.5)
+ci_high_d = np.percentile(boot_diffs, 97.5)
+prob_superior = np.mean(boot_diffs > 0) * 100
+print(f"  Δ médio = {boot_diffs.mean():+.4f} [{ci_low_d:+.4f}, {ci_high_d:+.4f}]")
+print(f"  P(LGB_Bayesian > XGB_Grid) = {prob_superior:.1f}%")
+
+# %% 
 
 
-# %% [markdown]
-# Resultados
+configs_list = list(all_configs.keys())
+effect_matrix = np.zeros((len(configs_list), len(configs_list)))
 
-plt.style.use('seaborn-v0_8-whitegrid')
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-axes = axes.flatten()
+print(f"\n  {'':18s}", end="")
+for c in configs_list:
+    print(f" {c:>12s}", end="")
+print()
 
-colors = ['#1f77b4', '#ff7f0e']
+for i, c1 in enumerate(configs_list):
+    print(f"  {c1:18s}", end="")
+    for j, c2 in enumerate(configs_list):
+        if i == j:
+            print(f" {'---':>12s}", end="")
+        else:
+            v1 = all_configs[c1]['f1'].values
+            v2 = all_configs[c2]['f1'].values
+            pooled = np.sqrt((v1.std()**2 + v2.std()**2) / 2)
+            d = (v2.mean() - v1.mean()) / pooled if pooled > 0 else 0
+            effect_matrix[i, j] = d
+            label = "~" if abs(d) < 0.2 else "S" if abs(d) < 0.5 else "M" if abs(d) < 0.8 else "L"
+            print(f"  {d:+.2f}({label})", end="  ")
+    print()
 
-#
-for idx, (metric, label) in enumerate(stats_metricas.items()):
-    data_to_plot = [df_compare[f'{metric}_rf'], df_compare[f'{metric}_xgb']]
-    bp = axes[idx].boxplot(data_to_plot, labels=['Random Forest', 'XGBoost'], 
-                            patch_artist=True, widths=0.6)
-    
-    for patch, color in zip(bp['boxes'], colors):
-        patch.set_facecolor(color)
-    
-    axes[idx].set_title(f'Distribuição de {label}', 
-                        fontsize=12, 
-                        fontweight='bold'
-    )
-    axes[idx].set_ylabel(label, fontsize=10)
-    axes[idx].grid(axis='y', linestyle='--', alpha=0.7)
-    means = [df_compare[f'{metric}_rf'].mean(), df_compare[f'{metric}_xgb'].mean()]
-    axes[idx].plot([1, 2], means, 'o', color='red', markersize=8, label='Média')
-    axes[idx].legend()
+# %% 
+fig = plt.figure(figsize=(20, 22))
+gs = gridspec.GridSpec(3, 2, hspace=0.35, wspace=0.3)
 
-plt.tight_layout()
+colors_grid = {'RF_Grid': '#888780', 'XGB_Grid': '#888780', 'LGB_Grid': '#888780'}
+colors_bay = {'RF_Bayesian': '#534AB7', 'XGB_Bayesian': '#534AB7', 'LGB_Bayesian': '#534AB7'}
+colors_all = {**colors_grid, **colors_bay}
+model_colors = {'RF_Grid': '#888780', 'RF_Bayesian': '#AFA9EC',
+                'XGB_Grid': '#378ADD', 'XGB_Bayesian': '#85B7EB',
+                'LGB_Grid': '#1D9E75', 'LGB_Bayesian': '#5DCAA5'}
+
+# F1 por Fold (Grid vs Bayesian, 3 modelos) 
+ax1 = fig.add_subplot(gs[0, 0])
+folds = range(1, 11)
+for name, df, color, ls in [
+    ('RF Grid', rf_grid, '#888780', '-'), ('RF Bayesian', rf_bay, '#888780', '--'),
+    ('XGB Grid', xgb_grid, '#378ADD', '-'), ('XGB Bayesian', xgb_bay, '#378ADD', '--'),
+    ('LGB Grid', lgb_grid, '#1D9E75', '-'), ('LGB Bayesian', lgb_bay, '#1D9E75', '--')]:
+    ax1.plot(folds, df['f1'].values, marker='o', markersize=4, label=name, color=color, linestyle=ls, linewidth=1.5)
+ax1.set_xlabel('Fold')
+ax1.set_ylabel('F1 Score')
+ax1.set_title('F1 por Fold: Grid (sólido) vs Bayesian (tracejado)', fontweight='bold')
+ax1.legend(fontsize=8, ncol=2, loc='lower left')
+ax1.grid(alpha=0.3)
+ax1.set_xticks(folds)
+
+# Bootstrap CI 
+ax2 = fig.add_subplot(gs[0, 1])
+names_sorted = sorted(bootstrap_ci.keys(), key=lambda x: bootstrap_ci[x][1])
+y_pos = range(len(names_sorted))
+for i, name in enumerate(names_sorted):
+    ci_low, mean, ci_high = bootstrap_ci[name]
+    color = model_colors[name]
+    ax2.barh(i, mean - ci_low, left=ci_low, height=0.6, color=color, alpha=0.3)
+    ax2.barh(i, ci_high - mean, left=mean, height=0.6, color=color, alpha=0.3)
+    ax2.plot(mean, i, 'o', color=color, markersize=8, zorder=5)
+    ax2.plot([ci_low, ci_high], [i, i], '-', color=color, linewidth=2, zorder=4)
+ax2.set_yticks(y_pos)
+ax2.set_yticklabels(names_sorted)
+ax2.set_xlabel('F1 Score')
+ax2.set_title('Bootstrap 95% CI (F1)', fontweight='bold')
+ax2.grid(alpha=0.3, axis='x')
+
+# Paired Differences (Bayesian - Grid) 
+ax3 = fig.add_subplot(gs[1, 0])
+paired_df = pd.DataFrame(paired_results)
+f1_paired = paired_df[paired_df['metric'] == 'f1']
+x_pos = np.arange(len(f1_paired))
+bar_colors = ['#E24B4A' if d < 0 else '#1D9E75' for d in f1_paired['delta']]
+bars = ax3.bar(x_pos, f1_paired['delta'].values, color=bar_colors, alpha=0.8, edgecolor='white')
+ax3.set_xticks(x_pos)
+ax3.set_xticklabels(f1_paired['model'].values)
+ax3.axhline(0, color='black', linewidth=0.8, linestyle='-')
+ax3.set_ylabel('Δ F1 (Bayesian - Grid)')
+ax3.set_title('Diferença F1: Bayesian vs Grid', fontweight='bold')
+ax3.grid(alpha=0.3, axis='y')
+
+# p-values
+for i, (_, row) in enumerate(f1_paired.iterrows()):
+    sig = "*" if row['wilcoxon_p'] < 0.05 else "ns"
+    y_offset = 0.002 if row['delta'] > 0 else -0.004
+    ax3.text(i, row['delta'] + y_offset, f"p={row['wilcoxon_p']:.3f}\n{sig}",
+             ha='center', va='bottom' if row['delta'] > 0 else 'top', fontsize=9)
+
+# Effect Size Heatmap 
+ax4 = fig.add_subplot(gs[1, 1])
+mask = np.eye(len(configs_list), dtype=bool)
+effect_display = np.ma.masked_where(mask, effect_matrix)
+im = ax4.imshow(effect_display, cmap='RdBu_r', vmin=-2, vmax=2, aspect='auto')
+ax4.set_xticks(range(len(configs_list)))
+ax4.set_xticklabels(configs_list, rotation=45, ha='right', fontsize=8)
+ax4.set_yticks(range(len(configs_list)))
+ax4.set_yticklabels(configs_list, fontsize=8)
+ax4.set_title("Cohen's d Matrix (F1)", fontweight='bold')
+plt.colorbar(im, ax=ax4, shrink=0.8, label="Cohen's d")
+
+for i in range(len(configs_list)):
+    for j in range(len(configs_list)):
+        if i != j:
+            d = effect_matrix[i, j]
+            label = "~" if abs(d) < 0.2 else "S" if abs(d) < 0.5 else "M" if abs(d) < 0.8 else "L"
+            color = 'white' if abs(d) > 0.8 else 'black'
+            ax4.text(j, i, f"{d:+.1f}\n{label}", ha='center', va='center', fontsize=7, color=color)
+
+# Friedman Rankings 
+ax5 = fig.add_subplot(gs[2, 0])
+rank_data = {}
+for m in METRICS:
+    fold_data = pd.DataFrame({name: df[m].values for name, df in all_configs.items()})
+    ranks = fold_data.rank(axis=1, ascending=False)
+    rank_data[m] = ranks.mean()
+
+rank_df = pd.DataFrame(rank_data)
+x = np.arange(len(METRICS))
+width = 0.12
+for i, config in enumerate(all_configs.keys()):
+    vals = [rank_df.loc[config, m] for m in METRICS]
+    ax5.bar(x + i * width, vals, width, label=config, color=model_colors[config], alpha=0.85)
+ax5.set_xticks(x + width * 2.5)
+ax5.set_xticklabels([m.upper() for m in METRICS])
+ax5.set_ylabel('Rank Médio (menor = melhor)')
+ax5.set_title('Ranking Médio por Métrica', fontweight='bold')
+ax5.legend(fontsize=7, ncol=3)
+ax5.grid(alpha=0.3, axis='y')
+ax5.invert_yaxis()
+
+# Box plot F1 
+ax6 = fig.add_subplot(gs[2, 1])
+f1_data = [df['f1'].values for df in all_configs.values()]
+bp = ax6.boxplot(f1_data, labels=list(all_configs.keys()), patch_artist=True, widths=0.5)
+for patch, color in zip(bp['boxes'], model_colors.values()):
+    patch.set_facecolor(color)
+    patch.set_alpha(0.6)
+ax6.set_ylabel('F1 Score')
+ax6.set_title('Distribuição F1 por Configuração', fontweight='bold')
+ax6.tick_params(axis='x', rotation=30)
+ax6.grid(alpha=0.3, axis='y')
+
+plt.savefig('statistical_comparison.png', dpi=150, bbox_inches='tight', facecolor='white')
 plt.show()
-# %%
-# Performance em cada Fold para todas as métricas
-fig2, axes2 = plt.subplots(2, 2, figsize=(14, 10))
-axes2 = axes2.flatten()
 
-colors_rf_xgb = ['#1f77b4', '#ff7f0e']
+# %% 
+print(f"\n{'Config':18s} {'F1':>8s} {'95% CI':>20s} {'Rank':>6s} {'Melhor?':>10s}")
 
-for idx, (metric, label) in enumerate(stats_metricas.items()):
-    axes2[idx].plot(df_compare['fold'], df_compare[f'{metric}_rf'], 
-                    marker='o', label='Random Forest', color=colors_rf_xgb[0], linewidth=2)
-    axes2[idx].plot(df_compare['fold'], df_compare[f'{metric}_xgb'], 
-                    marker='s', label='XGBoost', color=colors_rf_xgb[1], linewidth=2)
-    axes2[idx].set_title(f'{label} em cada Fold', fontsize=12, fontweight='bold')
-    axes2[idx].set_xlabel('Fold', fontsize=10)
-    axes2[idx].set_ylabel(label, fontsize=10)
-    axes2[idx].set_xticks(df_compare['fold'])
-    axes2[idx].legend()
-    axes2[idx].grid(axis='both', linestyle='--', alpha=0.7)
+for name in ['LGB_Bayesian', 'XGB_Grid', 'RF_Grid', 'LGB_Grid', 'XGB_Bayesian', 'RF_Bayesian']:
+    f1_mean = all_configs[name]['f1'].mean()
+    ci_low, _, ci_high = bootstrap_ci[name]
+    fold_data = pd.DataFrame({n: df['f1'].values for n, df in all_configs.items()})
+    rank = fold_data.rank(axis=1, ascending=False).mean()[name]
+    best = "★ BEST" if name == 'LGB_Bayesian' else ""
+    print(f"  {name:16s} {f1_mean:8.4f} [{ci_low:.4f}, {ci_high:.4f}] {rank:6.2f} {best:>10s}")
 
-plt.tight_layout()
-plt.show()
-
-#%%
-# Bland-Altman Plot
-fig3, axes3 = plt.subplots(2, 2, figsize=(14, 10))
-axes3 = axes3.flatten()
-
-for idx, (metric, label) in enumerate(stats_metricas.items()):
-    mean_of_both = (df_compare[f'{metric}_rf'] + df_compare[f'{metric}_xgb']) / 2
-    diff = df_compare[f'{metric}_xgb'] - df_compare[f'{metric}_rf']
-    mean_diff = diff.mean()
-    std_diff = diff.std()
-    
-    axes3[idx].scatter(mean_of_both, diff, color='purple', alpha=0.7)
-    for x, y, fold in zip(mean_of_both, diff, df_compare['fold']):
-        axes3[idx].annotate(str(int(fold)), (x, y), textcoords='offset points',
-                            xytext=(5, 4), fontsize=8, color='purple')
-    axes3[idx].axhline(mean_diff, color='green', linestyle='--',
-                       label=f'Viés: {mean_diff:.4f}')
-    axes3[idx].axhline(mean_diff + 1.96*std_diff, color='red', linestyle=':', 
-                       alpha=0.5, label='Limite de Conformidade (+)')
-    axes3[idx].axhline(mean_diff - 1.96*std_diff, color='red', linestyle=':', 
-                       alpha=0.5, label='Limite de Conformidade (-)')
-    axes3[idx].set_title(f'{label}\n', 
-                         fontsize=12, fontweight='bold')
-    axes3[idx].set_xlabel(f'Média da Performance ({label})', fontsize=10)
-    axes3[idx].set_ylabel(f'Diff (XGB - RF)', fontsize=10)
-    axes3[idx].legend(loc='best', fontsize=8)
-    axes3[idx].grid(True, linestyle='--', alpha=0.7)
-
-plt.tight_layout()
-plt.show()
-# %%
-
-# %% [markdown]
-# Concordância de Importância de Features
-BASE_DIR = Path(__file__).resolve().parent.parent
-RF_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search_rf")
-XGB_RESULTS = os.path.join(BASE_DIR, "folds", "grid_search_xgb")
-
-RF_FI_PATH = os.path.join(RF_RESULTS , "rf_feature_importance.csv")
-XGB_FI_PATH = os.path.join(XGB_RESULTS, "xgb_feature_importance.csv") 
-
-df_fi_rf = pd.read_csv(RF_FI_PATH)
-df_fi_xgb = pd.read_csv(XGB_FI_PATH)
-
-df_fi_rf.columns = [c.lower().strip() for c in df_fi_rf.columns]
-df_fi_xgb.columns = [c.lower().strip() for c in df_fi_xgb.columns]
-
-df_compare_fi = pd.merge(df_fi_rf, df_fi_xgb, on='feature', suffixes=('_rf', '_xgb'))
-
-print(f"Features analisadas: {len(df_compare_fi)}")
-display(df_compare_fi.sort_values(by='importance_mean_rf', ascending=False).head(50))
-
-# T-TEST
-
-# H0: A importância média dada pelo RF é igual à do XGB
-t_stat_fi, p_val_fi = stats.ttest_rel(df_compare_fi['importance_mean_rf'], df_compare_fi['importance_mean_xgb'])
-
-print(f"T-statistic: {t_stat_fi:.4f}")
-print(f"P-value:     {p_val_fi:.4e}")
-
-if p_val_fi < 0.05:
-    print("Importâncias divergentes.")
-else:
-    print("Importâncias equivalentes.")
-
-# SPEARMAN CORRELATION
-
-# H0: Não há correlação entre os rankings
-corr, p_spearman = stats.spearmanr(df_compare_fi['importance_mean_rf'], df_compare_fi['importance_mean_xgb'])
-
-print(f"Coeficiente de Spearman: {corr:.4f} (-1 a +1)")
-print(f"P-value:                {p_spearman:.4e}")
-
-if p_spearman < 0.05:
-    if corr > 0.7:
-        print("Alta comcordancia.")
-    elif 0.4 < corr <= 0.7:
-        print("Moderada comcordancia.")
-    else:
-        print("Rankings divergentes.")
-else:
-    print("Correlação não significativa.")
-
-#%%
-df_compare_fi['rank_rf'] = df_compare_fi['importance_mean_rf'].rank(ascending=False)
-df_compare_fi['rank_xgb'] = df_compare_fi['importance_mean_xgb'].rank(ascending=False)
-
-plt.figure(figsize=(10, 6))
-plt.scatter(df_compare_fi['rank_rf'], df_compare_fi['rank_xgb'], alpha=0.6, edgecolors='w', s=80)
-
-lims = [1, len(df_compare_fi)]
-plt.plot(lims, lims, 'r--', alpha=0.75, zorder=0, label='Concordância Perfeita')
-
-top_features = df_compare_fi.nsmallest(48, 'rank_rf')['feature']
-for feature in top_features:
-    row = df_compare_fi[df_compare_fi['feature'] == feature].iloc[0]
-    plt.annotate(row['feature'],
-                 (row['rank_rf'], row['rank_xgb']),
-                 xytext=(5, 5), textcoords='offset points', fontsize=9, color='black')
-
-plt.xlabel('Rank RF (1 = mais importante)', fontsize=12)
-plt.ylabel('Rank XGBoost (1 = mais importante)', fontsize=12)
-plt.title('Concordância de Feature Importance por Ranking\n(Spearman r={:.2f})'.format(corr), fontsize=14, fontweight='bold')
-plt.legend()
-plt.grid(True, linestyle='--', alpha=0.5)
-plt.gca()
-plt.gca()
-plt.show()
-
-# %%
+'''print(f"""
+CONCLUSÕES ESTATÍSTICAS:
+  1. LGB_Bayesian é o melhor modelo (F1=0.850, rank=1.5)
+  2. A melhoria do LGB_Bayesian sobre LGB_Grid é significativa
+     (Wilcoxon p=0.002, Cohen's d=2.53, efeito GRANDE)
+  3. RF e XGB não se beneficiaram da Bayesian Optimization
+     (p>0.05 em F1, convergência tardia, sub-regularização)
+  4. LGB_Bayesian vs XGB_Grid: P(LGB>XGB)={prob_superior:.1f}% via bootstrap,
+     mas IC da diferença inclui zero — vantagem provável mas não conclusiva
+  5. RF_Grid vs XGB_Grid: diferença negligível (Cohen's d=0.16)
+""")'''
