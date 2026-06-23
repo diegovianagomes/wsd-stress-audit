@@ -4,7 +4,7 @@ Projeto da disciplina **Tópicos em Inteligência Artificial e Otimização I (P
 
 ## O que é
 
-Estudo de **detecção de estresse a partir de sinais fisiológicos** captados por um wearable de pulso (Empatica E4), usando o dataset Wearable Device Dataset from Induced Stress and Structured Exercise Sessions (Hongn et al., 2025 — PhysioNet / *Scientific Data* 12:520), com 36 sujeitos adultos saudáveis submetidos a protocolos de estresse cognitivo, exercício aeróbico e anaeróbico.
+Estudo de **detecção de estresse a partir de sinais fisiológicos** captados por um wearable de pulso (Empatica E4), usando o dataset Wearable Device Dataset from Induced Stress and Structured Exercise Sessions (Hongn et al., 2025) , com 36 sujeitos adultos saudáveis submetidos a protocolos de estresse cognitivo, exercício aeróbico e anaeróbico.
 
 A partir dos sinais brutos (EDA, BVP/HR, HRV, temperatura e acelerometria), o projeto extrai 49 features em janelas de 60s e treina modelos de classificação (Random Forest, XGBoost, LightGBM) sob **validação honesta por sujeito** (GroupKFold), evitando vazamento entre treino e teste.
 
